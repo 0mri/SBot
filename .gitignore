@@ -131,6 +131,7 @@ dmypy.json
 
 
 # config 
+
 *.log
 .vscode/
 *.yml
@@ -140,3 +141,4 @@ __pycache__
 nohup.out
 .idea/
 .vscode/
+config/
