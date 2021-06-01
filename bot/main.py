@@ -1,4 +1,10 @@
 from . import Newegg
-from threading import Thread
+import multiprocessing
+import threading
+import time
+from multiprocessing.pool import ThreadPool
+from concurrent.futures import ThreadPoolExecutor
 def main():
-    n_t = Thread(target=Newegg().run).start()
+    # executor = ThreadPoolExecutor(max_workers=10)
+    # executor.submit(fn=Newegg().start)
+    Newegg().start()

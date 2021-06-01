@@ -131,7 +131,10 @@ dmypy.json
 
 
 # config 
-
+driver/
+*.png
+*.img
+*.jpg
 *.log
 .vscode/
 *.yml
