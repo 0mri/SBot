@@ -20,54 +20,87 @@ import datetime
 import json
 from ruamel import yaml
 from multiprocessing.pool import ThreadPool
-from multiprocessing import cpu_count
+from multiprocessing.process import current_process
+from multiprocessing import cpu_count, Value, Manager
 from .helpers import extract_item
 from bot import settings
+from bot.newegg.decorators.decorators import synchronized
 import sys
+import re
+
+is_found = Value('i', 0)
+
+
 class Newegg(Bot):
+
     class Item:
-        def __init__(self, *args, **kwargs):
-            pass
-        
+        def __init__(self, cell_item: bs4.BeautifulSoup):
+            """return Item object from newegg cell_item (BeatifulSoup)"""
+            # dict_item =
+            self.init(*extract_item(cell_item).values())
+
+        def init(self, _id, name, price, currency, link, image, in_stock):
+            self.id = _id
+            self.name = name
+            self.price = price
+            self.currency = currency
+            self.link = link
+            self.image = image
+            self.in_stock = in_stock
+
+        def in_range(self):
+            return self.price in range(self.price_min, self.price_max)
+
+        def is_in_stock(self) -> bool:
+            return self.in_stock
+
+        def __str__(self):
+            return f"{self.name} - {self.currency}{self.price}"
+
+        def __repr__(self):
+            return f"{self.name} - {self.currency}{self.price}"
+
+        @classmethod
+        def is_item(cls, item: bs4.BeautifulSoup):
+            return extract_item(item) is not None
+
     INSTANCE = 1
     BOT_PROTECTION_INTERVAL = 1
     SEARCH_INTERVAL = 3
     FETCH_MAIL_INTERVAL = 0.1
-    
+
     def __init__(self, query=None, *args, **kwargs):
         self.id = Newegg.INSTANCE
         Newegg.INSTANCE += 1
-        self.logger = Logger(logging_service=self.__class__.__name__,instance=self.id, enable_notifications=False)
+        self.logger = Logger(logging_service=self.__class__.__name__,
+                             instance=self.id, enable_notifications=True)
 
         self.__cfg__ = Config(path=self.__class__.__name__.lower())
         self.load_cfg(query)
-        
-        self.__items__ = Config(custom_path=f"{self.__class__.__name__}/data/items.yml")
+        self.__items__ = Config(
+            custom_path=f"{self.__class__.__name__}/data/items.yml")
         self.load_items()
         super(Newegg, self).__init__(self.logger)
-        
-        self.is_found = False
-        # self.logger.debug(f"search_query: {self.search_query.upper()}")
-        # self.logger.debug(f"min price: {self.price_min}")
-        # self.logger.debug(f"max price: {self.price_max}")
-        # self.logger.debug(f"Category ID: {self.category_id}")
+
     def load_items(self):
         self.__items__.load()
         self.items = self.__items__.config or []
+
     def save_items(self):
         self.__items__.save(self.items)
         self.load_items()
+
     def load_cfg(self, query=None):
         self.__cfg__.load()
-        
+
         self.config = self.__cfg__.config
-        #User Details
+        # User Details
         self.username = self.config['username']
         self.password = self.config['password']
         self.cvv = self.config['cvv']
-        
+
         self.gmail = self.config['gmail']
-        #Search Query
+        # Search Query
         newegg = self.config['newegg'][self.id-1]
         if(query):
             self.search_query = query
@@ -82,192 +115,298 @@ class Newegg(Bot):
         Bot.PROTECTOR = self.bot_protector
         if not self.driver:
             self.logger.error("Driver is not running")
-            sys.exit()
-        self.logger.info(f"{self.__class__.__name__} Bot is Running!")
-        # schedule.every(Newegg.BOT_PROTECTION_INTERVAL).seconds.do(self.bot_protector)
-        
-        # self.got_to_captcha()
+
+        if(settings.CAPTCHA):
+            self.got_to_captcha()
         # self.login()
-        
-        #MAIN FLOW
+
+        # MAIN FLOW
         self.get('https://www.newegg.com')
-        
-        
-        self.logger.info(f"Searchig for {self.search_query.upper()} between ${self.price_min} - ${self.price_max}")
+
+        self.logger.info(
+            f"Searchig for {self.search_query.upper()} between ${self.price_min} - ${self.price_max}")
+
         schedule.every(0.1).seconds.do(self._search_).tag('search')
-        
+        schedule.every(1).hours.do(self.got_to_captcha).tag('captcha')
+        schedule.every(1).seconds.do(self.bot_protector).tag('protector')
+        self._search_()
 
         results = []
-        while(True not in results):
+        while True not in results:
             self.load_items()
-            pool = ThreadPool(processes=max(min(cpu_count()-1,len(self.items)),1))
+            pool = ThreadPool(processes=max(
+                min(len(self.items), cpu_count()-1), 5))
             results = []
+            start_time = time.time()
             for i, item in enumerate(self.items):
-                results.append(pool.apply_async(func=self.add_to_cart, args=[self.items[i]]))
-
+                results.append(pool.apply_async(
+                    func=self.add_to_cart, args=[self.items[i]]))
 
             pool.close()
             pool.join()
             results = [r.get() for r in results]
             if('Human' in results):
                 self.got_to_captcha()
+
+            self.logger.debug(
+                f"{len(results)} requests in  {time.time()-start_time} seconds")
             
-        self.logger.info(f"There is item available!!!")
-        schedule.clear(tag='search')
+        self.validate_cart()
+        schedule.clear()
+        self.logger.info(f"There is item available!!!", True)
         cart_url = f"https://secure.newegg.com/shop/cart"
         self.get(cart_url)
-        
-        
-        self.driver.execute_script("document.getElementsByClassName('btn btn-primary btn-wide')[0].click()")
-        
-        # checkout_btn = self.driver.find_element_by_xpath("//button[@class='btn btn-primary btn-wide']")
-        # if(checkout_btn.is_enabled()):
-        #     self.driver.find_element_by_xpath("//button[@class='btn btn-primary btn-wide']").click()
-        # else:
-        #     self.driver.find_element_by_xpath("//button[@class='btn btn-secondary']").click()
-        #     while(not checkout_btn.is_enabled()):
-        #         continue
-        #     checkout_btn.click()
+        now = time.time()
 
-        
-        
+        # self.driver.find_element_by_xpath("//button[@class='btn btn-primary btn-wide']").click()
+        # time.sleep()
+        # self.close_popup()
+        # self.driver.find_element_by_xpath("//button[@class='btn btn-primary btn-wide']").click()
+        while('Shopping Cart' in self.driver.title):
+            try:
+                self.driver.execute_script("return document.getElementsByClassName('btn btn-secondary')[0].click()")
+            except:
+                try:
+                    self.driver.execute_script("return document.getElementsByClassName('btn btn-primary btn-wide')[0].click()")
+                except:
+                    pass
+            time.sleep(0.3)
+            
+        is_refreshed, is_logged_in = self.login(with_direct=False) or (False, False)
+        if is_logged_in:
+            self.logger.info(f"Logged In!")
+            if(is_refreshed):
+                self.js_click(_class='btn btn-primary btn-wide', timeout=5)
+            self.type_cvv()
+            table = self.fetch_table()
+            self.logger.print(table)
 
-        self.login(with_direct=False)
-        self.type_cvv()
-        table = self.fetch_table()
-        self.logger.print(table)
+            self.place_order() if not settings.DRY_RUN else None
+            self.logger.info(f"took {time.time() - now}  seconds")
+            order_num = self.get_order_num() if not settings.DRY_RUN and self.is_success(
+            ) else f"FAILED_ORDER#{self.get_timestamp()[7:]}"
 
-        self.place_order() if not settings.DRY_RUN else None
-        
-        order_num = self.get_order_num() if not settings.DRY_RUN and self.is_success() else f"FAILED_ORDER#{self.get_timestamp()[7:]}"
-        
-        self.screenshot(name=order_num)
-        self.driver.quit()
+            self.screenshot(name=order_num)
+            time.sleep(3)
+        else:
+            self.logger.error("There was an error with login, quit...")
+        if(not settings.DEV):
+                self.driver.quit()
         self.scheduler.stop()
+
     def login(self, with_direct=True):
         LOGIN_URL = 'https://secure.newegg.com/NewMyAccount/AccountLogin.aspx?'
         attemps = 1
-        while True:
-            if with_direct or attemps>=3:
+        email_step = False
+        verification_step = False
+        is_refreshed = False
+        v_attempts = 0
+        while True and attemps < 500:
+            if with_direct or attemps > 150 and email_step:
                 self.get(LOGIN_URL)
+                is_refreshed = True
             # Logging Into Account.
+            # self.logger.info(f"Typing Email Address...")
             try:
-                wait = WebDriverWait(self.driver, 3.5, 0.1)
-                # wait.until('labeled-input-signEmail')
-                wait.until(ec.visibility_of_element_located((By.ID, "labeled-input-signEmail")))
-                self.logger.info(f"Typing Email Address...")
-                
-                email_field = self.driver.find_element_by_id("labeled-input-signEmail")
-                email_field.clear()
-                # time.sleep(0.5)
-                email_field.send_keys(self.username)
-                email_field.send_keys(Keys.ENTER)
-            except (NoSuchElementException, TimeoutException):
-                self.logger.error("EMAIL ADDRESS")
-            attemps +=1
+                # wait_short = WebDriverWait(self.driver, 2.5, 0.1)
+                # wait_short.until(ec.visibility_of_element_located((By.ID, "labeled-input-signEmail")))
+                email_field = self.driver.find_element_by_id(
+                    "labeled-input-signEmail")
+                if email_field.get_attribute("value") != self.username:
+                    email_step = False
+                    email_field.clear()
+                    email_field.send_keys(self.username)
+                if(self.driver.find_element_by_xpath("//button[@id='signInSubmit']").is_enabled()):
+                    email_field.send_keys(Keys.ENTER)
+                    email_step = True
+                    time.sleep(1)
+                    # self.js_click(_id='signInSubmit',timeout=8)
 
+                # self.js_set_val(self.username,'labeled-input-signEmail',timeout=8)
+            except (NoSuchElementException, TimeoutException, Exception):
+                pass
+                # self.logger.error("EMAIL ADDRESS")
 
             # Verification Code
             try:
-                wait.until(ec.visibility_of_element_located((By.CLASS_NAME, "form-v-code")))
+                form_verify_array = self.driver.find_element_by_xpath(
+                    "//div[@class='form-v-code']").find_elements_by_xpath('//input')
+                v_attempts += 1
+                # wait_short = WebDriverWait(self.driver, 2.5, 0.1)
+                # wait_short.until(ec.visibility_of_element_located((By.CLASS_NAME, "form-v-code")))
                 self.logger.info(f"Fetching Verification Code...")
-                form_verify_array = self.driver.find_element_by_xpath( "//div[@class='form-v-code']").find_elements_by_xpath('//input')
                 verify_code = self.__get_mail_verification_code__()
                 for i in range(len(verify_code)):
                     if i == len(verify_code):
                         break
                     form_verify_array[i].send_keys(verify_code[i])
-                login = self.driver.find_element_by_xpath("//button[@id='signInSubmit']").click()
-                self.logger.info(f"Logged In!")
+                login = self.driver.find_element_by_xpath(
+                    "//button[@id='signInSubmit']").click()
+                return (is_refreshed, True)
+            except:
+                pass
+            if(v_attempts >= 2):
+                v_attempts = 0
+                self.driver.refresh()
+
+            # # Password
+            # self.logger.info(f"Typing Password...")
+            if(email_step):
+                try:
+                    # self.js_set_val(self.password,'labeled-input-password',timeout=3)
+                    # self.js_click(_id='signInSubmit',timeout=3)
+                    wait_short = WebDriverWait(self.driver, 1, 0.1)
+                    wait_short.until(ec.visibility_of_element_located(
+                        (By.ID, "labeled-input-password")))
+                    password_field = self.driver.find_element_by_id(
+                        "labeled-input-password")
+                    password_field.send_keys(self.password)
+                    # password_field.send_keys(Keys.ENTER)
+                    self.driver.find_element_by_xpath(
+                        "//button[@id='signInSubmit']").click()
+                    return (is_refreshed, True)
+                except (NoSuchElementException, TimeoutException):
+                    # self.logger.error("Couldnt login to account with password.")
+                    pass
+            attemps += 1
+
+    def js_click(self, _id=None, _class=None, timeout=3):
+        if _id:
+            js = f"document.getElementById('{_id}').click()"
+        elif(_class):
+            js = f"document.getElementsByClassName('{_class}')[0].click()"
+        if not self.timeout_js(js, timeout):
+            raise Exception
+        return True
+
+    def js_set_val(self, val, _id=None, _class=None, timeout=3):
+        if _id:
+            js = f"document.getElementById('{_id}').value = '{val}'"
+        elif(_class):
+            js = f"document.getElementsByClassName('{_class}')[0].value = '{val}'"
+        if not self.timeout_js(js, timeout):
+            raise Exception
+        return True
+
+    def timeout_js(self, js, timeout):
+        _timeout = time.time() + timeout
+        while time.time() < _timeout:
+            try:
+                self.driver.execute_script(js)
                 return True
             except:
                 pass
+        return False
 
-            # # Password
-            try:
-                wait.until(ec.visibility_of_element_located((By.ID, "labeled-input-password")))
-                self.logger.info(f"Typing Password...")
-                password_field = self.driver.find_element_by_id("labeled-input-password")
-                time.sleep(0.5)
-                password_field.send_keys(self.password)
-                password_field.send_keys(Keys.ENTER)
-                return True
-            except (NoSuchElementException, TimeoutException):
-                self.logger.error("Couldnt login to account with password.")
-                pass            
-            
     def add_to_cart(self, item):
-        if(self.is_found):
+        global is_found
+        if bool(is_found.value):
             return True
         # self.get(url)
         add_url = f"https://secure.newegg.com/Shopping/AddtoCart.aspx?Submit=ADD&ItemList={item}"
-        response = self.driver.request(method="GET", url=add_url)
-        html = response.text
-        soup = bs4.BeautifulSoup(html, 'html.parser')
-        
-        
-        if(soup.title.text == 'Are you a human?'):
-            self.logger.debug(soup.title.text)
-            return 'Human'
-            
-        scripts = soup.find_all('script')
         try:
-            js = [json.loads(sc.string.replace("window.__initialState__ = ","")) for sc in scripts if 'window.__initialState__' in str(sc)][0]
-            ItemNumber = js['CartInfo']['ActiveItemList'][0]['ItemNumber']
-            ItemKey = js['CartInfo']['ActiveItemList'][0]['ItemKey']
-            ItemGroup = js['CartInfo']['ActiveItemList'][0]['ItemGroup']
-            Quantity = js['CartInfo']['ActiveItemList'][0]['Quantity']
-            self.is_found = True
-            return True
-        except:
-            # self.logger.debug(f"item {item} is not available yet :(")
-            return False
-            # time.sleep(0.1)
-        
-        
-        # url = 'https://secure.newegg.com/shop/api/CheckoutApi'
-        # data = {'ItemList': [{'ItemNumber': ItemNumber, 'ItemKey': ItemKey, 'Quantity': Quantity, 'ItemGroup': ItemGroup}], 'Actions': []}
-        # self.logger.debug(data)
-        # response = self.driver.request('POST',url, data=data)
-        # print(dir(response.request))
-        # print(response.json())
-    def check_in_cart(self):
-        """
-        
-        return True if there is any item in the cart
-        
-        """
-        
-        try:
-            available = self.driver.find_element_by_xpath("//*[@class='btn btn-primary btn-wide']").is_enabled()
-            if available:
+
+
+            response = self.get(add_url,xhr=True)
+            html = response.text
+            soup = bs4.BeautifulSoup(html, 'html.parser')
+            if(soup.title.text == 'Are you a human?' or soup.title.text  == 'Forbidden: 403 Error'):
+                self.logger.debug(soup.title.text)
+                return 'Human'
+            cart_items = self.get_cart_items(source=html)
+            if cart_items:
                 return True
-            if not available:
-                pass
-                # self.logger.info("Item is not in cart")
-        except (TimeoutException, NoSuchElementException) as err:
+
+        except:
             pass
-            # self.logger.error("Item is not in cart")
+        self.logger.debug(f"item {item} is not available yet :(")
+        return False
+            # time.sleep(0.1)
+
+        
+    def get_cart_items(self, source=None):
+        cart_url = 'https://secure.newegg.com/shop/cart'
+        if not source:
+            res = self.get(cart_url,xhr=True)
+        html = source if source else res.text
+        soup = bs4.BeautifulSoup(html, 'html.parser')
+        scripts = soup.find_all('script')
+        js = json.loads(soup.html.find('script', text=re.compile(
+            'window.__initialState__ = ')).string.replace("window.__initialState__ = ", ""))
+        
+        return js['CartInfo']['ActiveItemList']
+
+    def validate_cart(self):
+        """
+        return True if there is any item in the cart
+        """
+        self.driver.get('https://secure.newegg.com/shop/cart')
+        cart_items = self.get_cart_items(self.driver.page_source)
+        
+        self.logger.debug(f"there is {len(cart_items)} in the cart")
+        min_item = min(
+            cart_items, key=lambda x: x['ItemMathInfo']['FinalUnitPrice'])
+
+        for item in cart_items:
+            if item == min_item:
+                self.set_qty(item, 1)
+            else:
+                self.logger.debug(f"remove item")
+                self.set_qty(item, -1)
+
+    def set_qty(self, item, qty):
+        """
+        set quantity for an item in the cart,
+        -1 for delete
+        """
+        fetch_data = {
+            "headers": {
+                "accept": "application/json, text/plain, */*",
+                "accept-language": "en-US,en;q=0.9",
+                "content-type": "application/json",
+                "sec-ch-ua": "\" Not;A Brand\";v=\"99\", \"Google Chrome\";v=\"91\", \"Chromium\";v=\"91\"",
+                "sec-ch-ua-mobile": "?0",
+                "sec-fetch-dest": "empty",
+                "sec-fetch-mode": "cors",
+                "sec-fetch-site": "same-origin",
+                "x-requested-with": "XMLHttpRequest"
+            },
+            "referrer": "https://secure.newegg.com/shop/cart",
+            "referrerPolicy": "unsafe-url",
+            "body":  json.dumps({'Actions': [{'ActionType': 'UpdateItemQty', 'JsonContent': json.dumps({'ActionType': 'UpdateItemQty', 'Items': [{'ItemKey': item['ItemKey'], 'ItemNumber': item['ItemNumber'], 'Quantity': qty}]})}]}),
+            "method": "POST",
+            "mode": "cors",
+            "credentials": "include"
+        }
+        fetch_str = 'fetch("https://secure.newegg.com/shop/api/InitCartApi", {})'.format(
+            json.dumps(fetch_data))
+
+        self.driver.execute_script(fetch_str)
+
     def type_cvv(self):
         try:
             wait = WebDriverWait(self.driver, 5, 0.1)
-            wait.until(ec.visibility_of_element_located((By.XPATH, "//input[@class='form-text mask-cvv-4'][@type='text']")))
+            wait.until(ec.visibility_of_element_located(
+                (By.XPATH, "//input[@class='form-text mask-cvv-4'][@type='text']")))
             self.logger.info(f"Typing CVV Number...")
-            security_code = self.driver.find_element_by_xpath("//input[@class='form-text mask-cvv-4'][@type='text']")
-            security_code.send_keys(Keys.BACK_SPACE + Keys.BACK_SPACE + Keys.BACK_SPACE + Keys.BACK_SPACE + str(self.cvv))
+            security_code = self.driver.find_element_by_xpath(
+                "//input[@class='form-text mask-cvv-4'][@type='text']")
+            security_code.send_keys(
+                Keys.BACK_SPACE + Keys.BACK_SPACE + Keys.BACK_SPACE + Keys.BACK_SPACE + str(self.cvv))
         except (AttributeError, NoSuchElementException, TimeoutException, ElementNotInteractableException):
             self.logger.error("CVV")
-            
+
     def fetch_table(self):
         wait = WebDriverWait(self.driver, 2, 0.1)
         try:
-            wait.until(ec.visibility_of_element_located((By.XPATH, "//div[@class='summary-content']")))
+            wait.until(ec.visibility_of_element_located(
+                (By.XPATH, "//div[@class='summary-content']")))
             soup = self.extract_page()
-            summary = soup.find('div','summary-content').find_all('li')
-            item_container = soup.find('div',"item-container",)
+            summary = soup.find('div', 'summary-content').find_all('li')
+            item_container = soup.find('div', "item-container",)
             item_details = {
-                "name": item_container.find("p","item-title").text,
-                "qty": item_container.find("div","item-qty").text,
+                "name": item_container.find("p", "item-title").text,
+                "qty": item_container.find("div", "item-qty").text,
                 "price": summary[0].span.text,
                 "delivery": summary[1].span.text,
                 "total": soup.find('li', 'summary-content-total').span.text
@@ -278,29 +417,32 @@ class Newegg(Bot):
                 item_details["vat"] = "$0"
             row = item_details.values()
             cols = [key.capitalize() for key in item_details.keys()]
-            return self.logger.table(columns=cols,rows=[row],title="Order Summary")
+            return self.logger.table(columns=cols, rows=[row], title="Order Summary")
         except:
             self.logger.error("FETCHONG TABLE")
             return None
-            
+
     def extract_page(self):
         html = self.driver.page_source
         soup = bs4.BeautifulSoup(html, 'html.parser')
         return soup
-    
+
     def place_order(self):
         try:
             # wait.until(ec.visibility_of_element_located((By.XPATH, "//button[text()='Place Order']")))
-            self.driver.find_element_by_xpath("//button[text()='Place Order']").click()
+            self.driver.find_element_by_xpath(
+                "//button[text()='Place Order']").click()
             self.logger.info(f"Waiting For Order Confirmation...")
         except (NoSuchElementException, TimeoutException, ElementNotInteractableException):
             self.logger.error("PLACEORDER")
-    
+
     def is_success(self):
         try:
             wait = WebDriverWait(self.driver, 45)
-            wait.until(ec.visibility_of_element_located((By.XPATH, "//span[@class='message-title']")))
-            message = self.driver.find_element_by_xpath("//span[@class='message-title']").text
+            wait.until(ec.visibility_of_element_located(
+                (By.XPATH, "//span[@class='message-title']")))
+            message = self.driver.find_element_by_xpath(
+                "//span[@class='message-title']").text
             if(message == 'THANK YOU FOR YOUR ORDER!'):
                 self.logger.info(f"{message}")
                 return True
@@ -308,17 +450,23 @@ class Newegg(Bot):
             return False
 
     def get_order_num(self):
-        order_num = self.driver.find_element_by_xpath("//label[text()='Order #: ']").text.replace(":", "").replace(" ", "").upper()
+        order_num = self.driver.find_element_by_xpath(
+            "//label[text()='Order #: ']").text.replace(":", "").replace(" ", "").upper()
         return order_num
-    
-    def bot_protector(self):
-        if self.driver.title != 'Are you a human?':
+
+    @synchronized
+    def bot_protector(self, source: bs4.BeautifulSoup = None):
+        title = source.title.text if source else self.driver.title
+        if title == 'Forbidden: 403 Error':
+            self.VPN(Bot.CHANGE_IP)
+        if title != 'Are you a human?':
             return
         while(self.driver.title == 'Are you a human?'):
             wait = WebDriverWait(self.driver, 30, 0.1)
             self.logger.info("Bot detection is activated")
             try:
-                wait.until(ec.visibility_of_element_located((By.ID, "imageCode")))
+                wait.until(ec.visibility_of_element_located(
+                    (By.ID, "imageCode")))
                 html = self.driver.page_source
                 soup = bs4.BeautifulSoup(html, 'html.parser')
                 time.sleep(1.5)
@@ -330,58 +478,56 @@ class Newegg(Bot):
                 solved_captcha = self.captcha(base64.b64decode(image_content))
                 self.driver.find_element_by_xpath(
                     "//input[@id='userInput']").send_keys(solved_captcha)
-                self.driver.find_element_by_xpath("//input[@id='verifyCode']").click()
+                self.driver.find_element_by_xpath(
+                    "//input[@id='verifyCode']").click()
                 time.sleep(0.5)
                 try:
                     alert = self.driver.switch_to_alert()
-                    self.logger.info(f"Wrong Captcha Trying Again - {solved_captcha}  - {round(time.time()-start_time)}")
+                    self.logger.info(
+                        f"Wrong Captcha Trying Again - {solved_captcha}  - {round(time.time()-start_time)}s")
                     alert.accept()
                 except:
-                    self.logger.info(f"Captcha Solved - {solved_captcha}")
+                    self.logger.info(
+                        f"Captcha Solved - {solved_captcha} - {round(time.time()-start_time)}s")
                     break
                 time.sleep(1)
             except:
                 self.driver.refresh()
                 time.sleep(3)
-    
+
     def _search_(self):
         self.load_cfg()
-        # url = 'https://www.newegg.com/global/il-en/p/pl?d=rtx+3060&N=101613480'
+        self.logger.debug(f"Searching for {self.search_query.upper()}")
 
-        # parsed = urlparse.urlparse(search_url)
+        try:
+            show_in_stock_only = '%204131'
+            url = f"https://www.newegg.com/p/pl?d={self.search_query.replace(' ', '+')}&N={self.category}{show_in_stock_only}&PageSize=96&Order=1"
+            response = self.get(url,xhr=True)
+            html = response.text
+            soup = bs4.BeautifulSoup(html, 'html.parser')
+            if(soup.title.text == 'Are you a human?'):
+                self.bot_protector()
 
-        # search_query = parse_qs(parsed.query)['d'][0]
-        # category = parse_qs(parsed.query)['N'][0]
+            items = soup.find_all('div', class_='item-cell')
+            items_obj = [self.Item(item_cell)
+                         for item_cell in items if self.Item.is_item(item_cell)]
+            # print(items_obj)
+            # temp_items = [extract_item(item) for item in items]
+            # items_ids = [item['id'] for item in temp_items if item is not None and item['price'] in range(self.price_min, self.price_max)]
+            relevant_items = [item for item in items_obj if round(item.price) in range(
+                self.price_min, self.price_max) and item.id not in self.items]
+            if len(relevant_items):
+                self.logger.info(f"Found {len(relevant_items)} items")
+                self.logger.info(f"{relevant_items}")
+                self.items = [item.id for item in relevant_items] + self.items
+                self.save_items()
+        except:
+            pass
 
-        url = f"https://www.newegg.com/p/pl?d={self.search_query.replace(' ', '+')}&N={self.category}%204131&PageSize=96&Order=1"
-        
-        # found_item = {}
-        response = self.driver.request("GET", url)
-        html = response.text
-        soup = bs4.BeautifulSoup(html, 'html.parser')
-        # self.logger.debug(soup.title.text)
-        
-        items = soup.find_all('div', class_='item-cell')
-        temp_items = [extract_item(item) for item in items]
-        items_ids = [item['id'] for item in temp_items if item is not None and item['price'] in range(self.price_min, self.price_max)]
-        if len(items_ids): 
-            tmp = [ _id for _id in items_ids if _id not in self.items]
-            self.logger.info(f"found {len(tmp)} items")
-            self.logger.info(f"ID: {tmp}")
-            self.items = tmp + self.items
-            self.save_items()
-            self.logger.debug(self.items)
-            
-
-        # self.logger.info(message=f"New Item is In Stock!\n{found_item['name']}\n{found_item['currency']}{found_item['price']}\n{found_item['link']}", notification=True, attach=found_item['img'])
-        # if(notify):
-        #     body = f"{found_item['name']} \n₪{found_item['price']}"
-        #     send_notification("Item is in stock!", body, found_item['img'])
-    
     def got_to_captcha(self):
         url = 'https://www.newegg.com/areyouahuman3?itn=true&referer=https%3A%2F%2Fwww.newegg.com%2FComponents%2FStore&why=8'
         self.get(url)
-    
+
     def __get_mail_verification_code__(self):
         # print("FETCHING VERIFICATION CODE...")
         timeout = time.time() + 1*5
@@ -389,13 +535,13 @@ class Newegg(Bot):
             imap = imaplib.IMAP4_SSL("imap.gmail.com")
             # authenticate
             imap.login(*self.gmail.values())
-            
+
             status, messages = imap.select("INBOX")
             # number of top emails to fetch
             N = 1
             # total number of emails
             messages = int(messages[0])
-            
+
             for i in range(messages, messages-N, -1):
                 # fetch the email message by ID
                 res, msg = imap.fetch(str(i), "(RFC822)")
@@ -405,15 +551,6 @@ class Newegg(Bot):
                         msg = email.message_from_bytes(response[1])
                         # decode the email subject
                         subject, encoding = decode_header(msg["Subject"])[0]
-                        # if isinstance(subject, bytes):
-                        #     # if it's a bytes, decode to str
-                        #     subject = subject.decode(encoding)
-                        # # decode email sender
-                        # From, encoding = decode_header(msg.get("From"))[0]
-                        # if isinstance(From, bytes):
-                        #     From = From.decode(encoding)
-                        # # print("Subject:", subject)
-                        # # print("From:", From)
                         if subject == 'Newegg Verification Code':
                             # if the email message is multipart
                             if msg.is_multipart():
@@ -421,10 +558,12 @@ class Newegg(Bot):
                                 for part in msg.walk():
                                     # extract content type of email
                                     content_type = part.get_content_type()
-                                    content_disposition = str(part.get("Content-Disposition"))
+                                    content_disposition = str(
+                                        part.get("Content-Disposition"))
                                     try:
                                         # get the email body
-                                        body = part.get_payload(decode=True).decode()
+                                        body = part.get_payload(
+                                            decode=True).decode()
                                     except:
                                         pass
                                     if content_type == "text/plain" and "attachment" not in content_disposition:
@@ -434,13 +573,16 @@ class Newegg(Bot):
                                         # download attachment
                                         filename = part.get_filename()
                                         if filename:
-                                            folder_name = "".join(c if c.isalnum() else "_" for c in subject)
+                                            folder_name = "".join(
+                                                c if c.isalnum() else "_" for c in subject)
                                             if not os.path.isdir(folder_name):
                                                 # make a folder for this email (named after the subject)
                                                 os.mkdir(folder_name)
-                                            filepath = os.path.join(folder_name, filename)
+                                            filepath = os.path.join(
+                                                folder_name, filename)
                                             # download attachment and save it
-                                            open(filepath, "wb").write(part.get_payload(decode=True))
+                                            open(filepath, "wb").write(
+                                                part.get_payload(decode=True))
                             else:
                                 # extract content type of email
                                 content_type = msg.get_content_type()
@@ -451,8 +593,9 @@ class Newegg(Bot):
                                     print(body)
                             if content_type == "text/html":
                                 soup = bs4.BeautifulSoup(body, 'html.parser')
-                                
-                                verification_code = soup.table.table.tbody.find_all('tr')[0].td.find_all('table')[0].find_all('td')[2].find_all('table')[0].tbody.find_all('tr')[4].td.text
+
+                                verification_code = soup.table.table.tbody.find_all('tr')[0].td.find_all(
+                                    'table')[0].find_all('td')[2].find_all('table')[0].tbody.find_all('tr')[4].td.text
                                 # print(f"found mail from NewEgg Verification Code: {verification_code}")
                                 # Delete The Mail
                                 imap.store(str(i), "+FLAGS", "\\Deleted")
@@ -463,7 +606,9 @@ class Newegg(Bot):
                         pass
                         # print('mail from NewEgg is not found, fetch new mails...')
                 time.sleep(Newegg.FETCH_MAIL_INTERVAL)
+
     def get_timestamp(self):
-        return str(datetime.datetime.timestamp(datetime.datetime.now())).replace('.','')
+        return str(datetime.datetime.timestamp(datetime.datetime.now())).replace('.', '')
+
     def __str__(self):
         return f"NEWEGG[{self.id}]"

@@ -1,0 +1,15 @@
+username: NEWEGG_USERNAME
+password: NEWEGG_PASSWORD
+cvv: NEWEGG_CVV
+newegg:
+  - price_min: MINIMUM_OF_PRICE_RANGE
+    price_max: MAXIMUM_OF_PRICE_RANGE
+    query: SEARCH__QUERY
+    category_id: 'CATEGORY_ID'
+gmail:
+  email: YOUR_EMAIL(MUST_BE_GMAIL)
+  password1: GMAIL_PASSWORD
+settings:
+  interval: 3
+  headless: false
+  notify: false

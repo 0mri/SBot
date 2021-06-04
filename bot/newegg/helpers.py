@@ -1,6 +1,5 @@
 import urllib.parse as urlparse
 from urllib.parse import parse_qs
-
 def get_item_id_by_url(url):
     try:
         return parse_qs(urlparse.urlparse(url).query)['ItemList'][0]
@@ -28,11 +27,11 @@ def extract_item(item):
                 currency = '$'
             else:
                 currency = '₪'
-            float_price = float(price.strong.text.replace(",", ""))
+            float_price = float(price.strong.text.replace(",", "")+price.sup.text) 
             in_stock = check_in_stock(item)
             item_link = item.a['href']
             item_img = item.a.img['src']
-            item_name = " ".join(item.find('a', 'item-title').text.split()[:6])
+            item_name = item.find('a', 'item-title').text
             return {
                 "id": get_item_id_by_url(item_link),
                 "name": item_name,
@@ -44,3 +43,4 @@ def extract_item(item):
             }
         except:
             return None
+        

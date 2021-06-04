@@ -1,10 +1,10 @@
 import queue
 import threading
 from os import path
-
+from bot.settings import APPRISE_CONFIG_PATH
 import apprise
 
-APPRISE_CONFIG_PATH = "config.yml"
+
 
 
 class NotificationHandler:

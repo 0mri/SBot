@@ -1,0 +1,4 @@
+2captcha:
+  api_key: API_KEY
+urls:
+  - tgram://CHAT_ID/USER_ID

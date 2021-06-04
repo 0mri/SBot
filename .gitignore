@@ -144,4 +144,4 @@ __pycache__
 nohup.out
 .idea/
 .vscode/
-config/
+*.ps1
