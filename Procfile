@@ -1,3 +1,3 @@
-web: python -m bot
+web: python bot/__main__.py
 
-worker: python -m bot
+worker: python bot/__main__.py
