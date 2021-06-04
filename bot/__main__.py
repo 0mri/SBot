@@ -1,4 +1,5 @@
 from .main import main
+from bot.newegg.test import test
 import argparse
 from bot import settings
 import sys
@@ -7,11 +8,13 @@ import threading
 import os
 def pre_run():
     
-    os.system("taskkill /im chromedriver.exe /f")
-    os.system("taskkill /im chrome.exe /f")
-    
-    
+    # os.system("taskkill /im chromedriver.exe /f")
+    # os.system("taskkill /im chrome.exe /f")
     parser = argparse.ArgumentParser(prog="bot",description="SELENIUM BOT")
+    
+    
+    os.system("kill -9 `pidof chrome chromedriver`") if platform.system() == settings.LINUX else os.system("taskkill /im chrome.exe /f  | taskkill /im chromedriver.exe /f")
+    
 
     parser.add_argument("-d","--dev",help="(optional) set developer mode",default=False,action='store_true')
     
@@ -28,6 +31,8 @@ def pre_run():
     parser.add_argument("--captcha",action='store_true' ,help="(optional) go to captcha first",default=False)
     
     parser.add_argument("--headless",action='store_true' ,help="(optional) force headless browser",default=False)
+    
+    parser.add_argument("--test",action='store_true',default=False)
     
     args = parser.parse_args()
     if args.chrome:
@@ -52,6 +57,11 @@ def pre_run():
     settings.PROCESSES_NUM = args.processes
     settings.HEADLESS = args.headless
     settings.CAPTCHA = args.captcha
+    
+    
+    main() if not args.test else test() 
+    
 if __name__ == "__main__":
     pre_run()
-    main()
+    
+   

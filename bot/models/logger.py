@@ -17,7 +17,10 @@ class Logger:
         self.instance = instance
         if(Logger.SHUFFLE_COLORS):
             shuffle(Logger.COLORS)
-        self.color =  Logger.COLORS.pop()
+            self.color =  Logger.COLORS.pop()
+        else:
+            shuffle(Logger.COLORS)
+            self.color =  Logger.COLORS[0]
         # self.color =  'bright_magenta'
         # Logger setup
         self.Logger = logging.getLogger(f"{self.name.lower()}")
