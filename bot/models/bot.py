@@ -18,17 +18,19 @@ import time
 import threading
 import os
 import sys
-
-
+import imaplib
+import requests
+import re
 class Bot:
     PROTECTOR = None
-
+    INITIAL_IP = None
     NUM_OF_CAPTCHA = 0
     LAST_TIME_CAPTCHA = None
     VPN_COMMANDS = CENNECT, CHANGE_IP, DISCONNECT = (
         'connect', 'changeip', 'disconect')
 
     def __init__(self, logger: Logger):
+        Bot.INITIAL_IP = self.get_ip()
         self.___cfg___ = Config(path='')
         self.___cfg___.load()
         self._config = self.___cfg___.config
@@ -44,12 +46,16 @@ class Bot:
         if self._config.get('2captcha', None):
             api_key = self._config['2captcha']['api_key']
             self._solver = CaptchaSolver('2captcha', api_key=api_key)
-
-        schedule.every(10).minutes.do(
-            self.VPN, (None, None, True)).tag('change_ip')
+        
+        
 
         # Start Backgroud Tasks
         self.run_continuously()
+        
+    def __init_mail__(self):
+        self.gmail = self.config['gmail']
+        self.imap = imaplib.IMAP4_SSL("imap.gmail.com")
+        self.imap.login(*self.gmail.values())
 
     def run(self):
         raise NotImplementedError()
@@ -62,26 +68,24 @@ class Bot:
             return solved_captcha
         except:
             self.logger.error("Error sloving captcha")
-        if(Bot.NUM_OF_CAPTCHA >= 5 or time.time()-Bot.LAST_TIME_CAPTCHA < 20):
-            self.VPN(Bot.CHANGE_IP)
-            time.sleep(5)
-            Bot.NUM_OF_CAPTCHA = 0
+        # if(Bot.NUM_OF_CAPTCHA >= 5 or time.time()-Bot.LAST_TIME_CAPTCHA < 20):
+        #     # self.VPN(Bot.CHANGE_IP)
+        #     time.sleep(5)
+        #     Bot.NUM_OF_CAPTCHA = 0
 
     def login(self):
         raise NotImplementedError()
 
     def __create_driver__(self):
-        try:
-            self.driver.quit()
-        except:
-            pass
+        # if  hasattr(self, 'driver'):
+        #     self.driver.close()
         if(self.webdriver == settings.CHROME):
             options = webdriver.ChromeOptions()
             if(self.headless or settings.HEADLESS):
                 options.add_argument('headless')
             options.add_argument("window-size=1920,1080")
             options.add_argument("--log-level=3")
-
+            # options.add_extension(f"{settings.ROOT_PATH}ext/webdev.crx")
             caps = DesiredCapabilities().CHROME
             # caps["pageLoadStrategy"] = "normal"  #  complete
             caps["pageLoadStrategy"] = "eager"  # interactive
@@ -103,11 +107,10 @@ class Bot:
             options.add_argument("disable-gpu")
             options.add_argument("disable-extensions")
 
-            driver = Chrome(desired_capabilities=caps,
-                            executable_path=settings.DRIVER_PATH, options=options)
             self.logger.debug(
                 f"creating chromedriver for {self.__class__.__name__}", False)
-            self.driver = driver
+            return Chrome(desired_capabilities=caps,
+                            executable_path=settings.DRIVER_PATH, options=options)
         elif(self.webdriver == settings.EDGE):
             options = EdgeOptions()
             if(self.headless or settings.HEADLESS):
@@ -122,14 +125,19 @@ class Bot:
 
     def get(self, url, protect=True, xhr=False):
         if xhr:
-            response = self.driver.request('GET', url, timeout=2)
             self.logger.debug(f"xhr request: {url}")
-            Bot.PROTECTOR(source=bs4.BeautifulSoup(
-                response.text, 'html.parser')) if Bot.PROTECTOR is not None and protect else None
+            try:
+                response = self.driver.request('GET', url, timeout=2)
+            except:
+                pass
+            # Bot.PROTECTOR(source=bs4.BeautifulSoup(response.text, 'html.parser')) if Bot.PROTECTOR is not None and protect else None
             return response
         else:
             self.logger.debug(f"getting {url}")
-            self.driver.get(url)
+            try:
+                self.driver.get(url)
+            except :
+                pass
             Bot.PROTECTOR() if Bot.PROTECTOR is not None and protect else None
         # self.driver.execute_script('localStorage.setItem("aatc_mask_show2",1)')
 
@@ -192,7 +200,7 @@ class Bot:
             self.logger.error(f"Error taking screenshot")
             self.logger.debug(path)
 
-    def run_continuously(self, interval=1):
+    def run_continuously(self, interval=0.5):
         """Continuously run, while executing pending jobs at each
         elapsed time interval.
         @return cease_continuous_run: threading. Event which can
@@ -224,9 +232,15 @@ class Bot:
 
         self.scheduler = ScheduleThread()
         self.scheduler.start()
+    
+    
+    def get_ip(self):
+        res = requests.get('http://ip-api.com/json/').json()
+        return res['query'], res['isp']
+    
+    def is_ip(self, ip):
+        regex = "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$"
+        if(re.search(regex, ip)):
+            return True
+        return False
 
-    def VPN(self, connect=None, disconnect=None, change_ip=True):
-        cmd = Bot.CENNECT if connect else Bot.DISCONNECT if disconnect else Bot.CHANGE_IP
-        self.logger.info("Changing IP address" + f'"HMA! Pro VPN.exe" -' + cmd)
-        os.system(f'"HMA! Pro VPN.exe" -changeip')
-        time.sleep(7)

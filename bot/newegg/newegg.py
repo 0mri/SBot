@@ -11,7 +11,6 @@ import bs4
 import base64
 from rich.table import Table
 import schedule
-import imaplib
 import email
 from email.header import decode_header
 import os
@@ -35,12 +34,12 @@ success = False
 class Newegg(Bot):
 
     class Item:
-        def __init__(self, cell_item: bs4.BeautifulSoup):
-            """return Item object from newegg cell_item (BeatifulSoup)"""
-            # dict_item =
-            self.init(*extract_item(cell_item).values())
+        def __init__(self, dict_item: dict):
+            """return Item object from newegg dict_item"""
+            self.init(*extract_item(dict_item).values())
 
-        def init(self, _id, name, price, currency, link, image, in_stock):
+        def init(self, is_combo, _id, name, price, currency, link, image, in_stock):
+            self.is_combo = is_combo
             self.id = _id
             self.name = name
             self.price = price
@@ -62,7 +61,7 @@ class Newegg(Bot):
             return f"{self.name} - {self.currency}{self.price}"
 
         @classmethod
-        def is_item(cls, item: bs4.BeautifulSoup):
+        def is_item(cls, item: dict):
             return extract_item(item) is not None
 
     INSTANCE = 1
@@ -82,9 +81,12 @@ class Newegg(Bot):
         self.__items__ = Config(
             custom_path=f"{self.__class__.__name__}/data/items.yml")
         self.load_items()
+        
+        
         super(Newegg, self).__init__(self.logger)
-        self.__init_mail__()
+        
 
+        self.__init_mail__()
     def load_items(self):
         self.__items__.load()
         self.items = self.__items__.config or []
@@ -111,53 +113,51 @@ class Newegg(Bot):
         self.price_min = newegg['price_min']
         self.price_max = newegg['price_max']
         self.category = newegg['category_id']
+    def stop(self):
+        self.driver.quit()
+        schedule.clear()
+        self.scheduler.stop()
+        
 
-    def __init_mail__(self):
-        self.gmail = self.config['gmail']
-        self.imap = imaplib.IMAP4_SSL("imap.gmail.com")
-        self.imap.login(*self.gmail.values())
-
-    def start(self):
-
-        self.__create_driver__()
+    def start(self, timeout=sys.maxsize):
         Bot.PROTECTOR = self.bot_protector
-        if not self.driver:
-            self.logger.error("Driver is not running")
+        self.driver = self.__create_driver__()
+        
 
-        if(settings.CAPTCHA):
-            self.got_to_captcha()
-        # self.login()
+        self.VPN()
+        
+        self.get('https://www.newegg.com', protect=False) if not settings.CAPTCHA else self.got_to_captcha()
+                
+                
+       
 
-        # MAIN FLOW
-        self.get('https://www.newegg.com')
 
         self.logger.info(
             f"Searchig for {self.search_query.upper()} between ${self.price_min} - ${self.price_max}")
-
-        schedule.every(0.01).seconds.do(self._search_).tag('search')
-        schedule.every(1).hours.do(self.got_to_captcha).tag('captcha')
-        schedule.every(1).seconds.do(self.bot_protector).tag('protector')
-        # schedule.every(1).minutes.do(self.__create_driver__).tag('driver')
-
+        # self.__create_driver__()
+         # MAIN FLOW
+        start_time = time.time()
+        
         results = []
         while True not in results:
             self.load_items()
             pool = ThreadPool(processes=max(
                 min(len(self.items), cpu_count()-1), 5))
             results = []
-            start_time = time.time()
+            start_req_time = time.time()
             for i, item in enumerate(self.items):
                 results.append(pool.apply_async(
                     func=self.add_to_cart, args=[self.items[i]]))
-
+            results.append(pool.apply_async(func=self.__search__))
             pool.close()
             pool.join()
             results = [r.get() for r in results]
-            if('Human' in results):
-                self.got_to_captcha()
+            if('Human' in results or time.time() >= start_time + timeout*60):
+                self.stop()
+                return False, round(time.time() - start_time)
 
-            self.logger.debug(
-                f"{len(results)} requests in  {time.time() - start_time} seconds")
+            self.logger.debug(f"{len(results)} requests in  {time.time() - start_req_time} seconds")
+
 
         self.validate_cart()
         schedule.clear()
@@ -208,6 +208,7 @@ class Newegg(Bot):
         if(not settings.DEV):
             self.driver.quit()
 
+        time.sleep(3)
         self.scheduler.stop()
         return (success, time.time()-now)
 
@@ -219,14 +220,15 @@ class Newegg(Bot):
         is_refreshed = False
         v_attempts = 0
         while True and attemps < 500:
+            self.bot_protector()
             if with_direct and email_step:
                 self.get(LOGIN_URL)
                 is_refreshed = True
 
-            if attemps == 50:
-                self.got_to_captcha()
-                attemps = 0
-            print(attemps)
+            # if attemps == 50:
+            #     self.got_to_captcha()
+            #     attemps = 0
+            self.logger.debug(f"login attempt {attemps}")
             # Logging Into Account.
             # self.logger.info(f"Typing Email Address...")
             try:
@@ -329,19 +331,19 @@ class Newegg(Bot):
         # self.get(url)
         add_url = f"https://secure.newegg.com/Shopping/AddtoCart.aspx?Submit=ADD&ItemList={item}"
         try:
-
             response = self.get(add_url, xhr=True)
             html = response.text
             soup = bs4.BeautifulSoup(html, 'html.parser')
+            self.logger.debug(soup.title.text)
             if(soup.title.text == 'Are you a human?' or soup.title.text == 'Forbidden: 403 Error'):
                 self.logger.debug(soup.title.text)
                 return 'Human'
             cart_items = self.get_cart_items(source=html)
             if cart_items:
                 return True
-
         except:
             pass
+
         self.logger.debug(f"item {item} is not available yet :(")
         return False
         # time.sleep(0.1)
@@ -362,15 +364,15 @@ class Newegg(Bot):
         self.driver.get('https://secure.newegg.com/shop/cart')
         cart_items = self.get_cart_items(self.driver.page_source)
 
-        self.logger.debug(f"there is {len(cart_items)} in the cart")
-        min_item = min(
-            cart_items, key=lambda x: x['ItemMathInfo']['FinalUnitPrice'])
 
+        self.logger.debug(f"there {'is' if len(cart_items) == 1 else 'are'} {len(cart_items)} {'item' if len(cart_items) == 1 else 'items'} in the cart")
+        
+        min_item = min(cart_items, key=lambda x: x['ItemMathInfo']['FinalUnitPrice'])
         for item in cart_items:
             if item == min_item:
                 self.set_qty(item, 1)
             else:
-                self.logger.debug(f"remove item")
+                self.logger.debug(f"removing {item['ItemDetailInfo']['LineDescription']}...")
                 self.set_qty(item, -1)
 
     def set_qty(self, item, qty):
@@ -417,6 +419,7 @@ class Newegg(Bot):
                 return
             except (AttributeError, NoSuchElementException, TimeoutException, ElementNotInteractableException):
                 self.logger.error("CVV")
+            time.sleep(0.5)
 
     def fetch_table(self):
         wait = WebDriverWait(self.driver, 2, 0.1)
@@ -480,7 +483,7 @@ class Newegg(Bot):
     def bot_protector(self, source: bs4.BeautifulSoup = None):
         title = source.title.text if source else self.driver.title
         if title == 'Forbidden: 403 Error':
-            self.VPN(change_ip=True)
+            # self.VPN()
             self.driver.get('www.newegg.com')
         if title != 'Are you a human?':
             return
@@ -518,28 +521,37 @@ class Newegg(Bot):
                 self.driver.refresh()
                 time.sleep(3)
 
-    def _search_(self):
+    def __search__(self):
         self.load_cfg()
 
         try:
-            show_in_stock_only = '%204131'
-            url = f"https://www.newegg.com/p/pl?d={self.search_query.replace(' ', '+')}&N={self.category}{show_in_stock_only}&PageSize=96&Order=1"
+            show_in_stock_only = False
+            url = f"https://www.newegg.com/p/pl?d={self.search_query.replace(' ', '+')}&N={self.category}{'%204131 'if show_in_stock_only else ''}&PageSize=96&Order=1"
             response = self.get(url, xhr=True)
             html = response.text
             soup = bs4.BeautifulSoup(html, 'html.parser')
             self.logger.debug(soup.title.text)
             if(soup.title.text == 'Are you a human?' or soup.title.text == 'Forbidden: 403 Error'):
-                self.bot_protector(source=soup)
+                return "Human"
             self.logger.debug(f"Searching for {self.search_query.upper()}")
 
-            items = soup.find_all('div', class_='item-cell')
-            items_obj = [self.Item(item_cell)
-                         for item_cell in items if self.Item.is_item(item_cell)]
+            scripts = soup.find_all('script')
+            js_items = json.loads(soup.html.find('script', text=re.compile(
+                'window.__initialState__ = ')).string.replace("window.__initialState__ = ", ""))['Products']
+
+            items_obj = [self.Item(item) for item in js_items if self.Item.is_item(item)]
+                
+            # items = soup.find_all('div', 'item-cell')
+            # items_obj = [self.Item(item_cell)
+            #              for item_cell in items if self.Item.is_item(item_cell)]
+
+            in_stock = [item for item in items_obj if item.in_stock]
+            self.logger.debug(f"in stock items: \n{in_stock}")
             # print(items_obj)
             # temp_items = [extract_item(item) for item in items]
             # items_ids = [item['id'] for item in temp_items if item is not None and item['price'] in range(self.price_min, self.price_max)]
             relevant_items = [item for item in items_obj if round(item.price) in range(
-                self.price_min, self.price_max) and item.id not in self.items]
+                self.price_min, self.price_max) and item.id not in self.items and item.in_stock]
             if len(relevant_items):
                 self.logger.info(f"Found {len(relevant_items)} items")
                 self.logger.info(f"{relevant_items}")
@@ -552,8 +564,9 @@ class Newegg(Bot):
         cur_url = self.driver.current_url
         url = 'https://www.newegg.com/areyouahuman3?itn=true&referer=https%3A%2F%2Fwww.newegg.com%2FComponents%2FStore&why=8'
         self.get(url)
-        self.VPN(change_ip=True)
-        self.get(cur_url)
+        
+        # self.VPN()
+        # self.get(cur_url)
 
     def __get_mail_verification_code__(self):
         # print("FETCHING VERIFICATION CODE...")
@@ -636,6 +649,43 @@ class Newegg(Bot):
 
     def get_timestamp(self):
         return str(datetime.datetime.timestamp(datetime.datetime.now())).replace('.', '')
+    
+    def __create_schedule__(self):
+        pass
+        # schedule.every(0.5).seconds.do(self.__search__).tag('search')
+        # schedule.every(2).minutes.do(self.VPN)
 
+        # schedule.every(1).hours.do(self.VPN).tag('change_ip')
+        # schedule.every(1).hours.do(self.got_to_captcha).tag('captcha')
+        # schedule.every(3).seconds.do(self.bot_protector).tag('protector')
+        # schedule.every(1).minutes.do(self.__create_driver__).tag('driver')
+
+
+    def VPN(self):
+        schedule.clear()
+        cur_ip, isp = self.get_ip()
+        # cmd = Bot.CENNECT if connect else Bot.DISCONNECT if disconnect else Bot.CHANGE_IP
+        os.system(f'"HMA! Pro VPN.exe" -disconnect')
+        orginal_ip = None
+        while(not orginal_ip or isp != 'BEZEQINT'):
+            try:
+                orginal_ip,isp = self.get_ip()
+                print("1",orginal_ip)
+            except:
+                pass
+            time.sleep(1)
+        new_ip = orginal_ip
+        os.system(f'"HMA! Pro VPN.exe" -connect')
+        while(new_ip == orginal_ip):
+            try:
+                new_ip,isp = self.get_ip()
+                print('2',new_ip)
+            except:
+                pass
+            time.sleep(1)
+        self.__init_mail__()
+        time.sleep(10)
+        self.__create_schedule__()
+        
     def __str__(self):
         return f"NEWEGG[{self.id}]"
