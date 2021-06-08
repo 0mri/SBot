@@ -50,7 +50,7 @@ class Bot:
         
 
         # Start Backgroud Tasks
-        self.run_continuously()
+        # self.run_continuously()
         
     def __init_mail__(self):
         self.gmail = self.config['gmail']
@@ -127,7 +127,7 @@ class Bot:
         if xhr:
             self.logger.debug(f"xhr request: {url}")
             try:
-                response = self.driver.request('GET', url, timeout=2)
+                response = self.driver.request('GET', url,page_load_timeout=2)
             except:
                 pass
             # Bot.PROTECTOR(source=bs4.BeautifulSoup(response.text, 'html.parser')) if Bot.PROTECTOR is not None and protect else None
@@ -237,10 +237,4 @@ class Bot:
     def get_ip(self):
         res = requests.get('http://ip-api.com/json/').json()
         return res['query'], res['isp']
-    
-    def is_ip(self, ip):
-        regex = "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$"
-        if(re.search(regex, ip)):
-            return True
-        return False
 

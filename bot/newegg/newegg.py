@@ -30,6 +30,8 @@ import socket
 is_found = Value('i', 0)
 success = False
 
+logout_url = 'https://secure.newegg.com/NewMyAccount/AccountLogout.aspx'
+
 
 class Newegg(Bot):
 
@@ -48,8 +50,8 @@ class Newegg(Bot):
             self.image = image
             self.in_stock = in_stock
 
-        def in_range(self):
-            return self.price in range(self.price_min, self.price_max)
+        # def in_range(self):
+        #     return self.price in range(self.price_min, self.price_max)
 
         def is_in_stock(self) -> bool:
             return self.in_stock
@@ -69,24 +71,22 @@ class Newegg(Bot):
     SEARCH_INTERVAL = 3
     FETCH_MAIL_INTERVAL = 0
 
-    def __init__(self, query=None, test=False, *args, **kwargs):
+    def __init__(self, test=False, *args, **kwargs):
         self.is_test = test
         self.id = Newegg.INSTANCE
-        # Newegg.INSTANCE += 1
+        Newegg.INSTANCE += 1
         self.logger = Logger(logging_service=self.__class__.__name__,
                              instance=self.id, enable_notifications=True)
 
         self.__cfg__ = Config(path=self.__class__.__name__.lower())
-        self.load_cfg(query)
+        self.load_cfg()
         self.__items__ = Config(
             custom_path=f"{self.__class__.__name__}/data/items.yml")
         self.load_items()
-        
-        
-        super(Newegg, self).__init__(self.logger)
-        
 
-        self.__init_mail__()
+        super(Newegg, self).__init__(self.logger)
+
+        # self.__init_mail__()
     def load_items(self):
         self.__items__.load()
         self.items = self.__items__.config or []
@@ -95,52 +95,47 @@ class Newegg(Bot):
         self.__items__.save(self.items)
         self.load_items()
 
-    def load_cfg(self, query=None):
+    def load_cfg(self):
         self.__cfg__.load()
-
         self.config = self.__cfg__.config
+
         # User Details
         self.username = self.config['username']
         self.password = self.config['password']
         self.cvv = self.config['cvv']
 
-        # Search Query
-        newegg = self.config['newegg'][self.id-1]
-        if(query):
-            self.search_query = query
-        elif(newegg.get('query', None)):
-            self.search_query = newegg['query']
-        self.price_min = newegg['price_min']
-        self.price_max = newegg['price_max']
-        self.category = newegg['category_id']
     def stop(self):
         self.driver.quit()
-        schedule.clear()
-        self.scheduler.stop()
-        
 
     def start(self, timeout=sys.maxsize):
         Bot.PROTECTOR = self.bot_protector
         self.driver = self.__create_driver__()
-        
 
         self.VPN()
+
+        self.get('https://www.newegg.com',protect=False) if not settings.CAPTCHA else self.got_to_captcha()
+        time.sleep(1)
         
-        self.get('https://www.newegg.com', protect=False) if not settings.CAPTCHA else self.got_to_captcha()
-                
-                
-       
-
-
-        self.logger.info(
-            f"Searchig for {self.search_query.upper()} between ${self.price_min} - ${self.price_max}")
         # self.__create_driver__()
-         # MAIN FLOW
+        # MAIN FLOW
         start_time = time.time()
+
+        # login
         
+        
+        is_logged_in = self.login()
+        if not is_logged_in:
+            return False, round(time.time() - start_time)
+        self.logger.info(f"Start Scanning...")
+
         results = []
         while True not in results:
+            self.load_cfg()
             self.load_items()
+            try:
+                self.driver.execute_script('localStorage.clear();')
+            except:
+                pass
             pool = ThreadPool(processes=max(
                 min(len(self.items), cpu_count()-1), 5))
             results = []
@@ -148,7 +143,11 @@ class Newegg(Bot):
             for i, item in enumerate(self.items):
                 results.append(pool.apply_async(
                     func=self.add_to_cart, args=[self.items[i]]))
-            results.append(pool.apply_async(func=self.__search__))
+
+            # Search Query
+            for newegg in self.config['newegg']:
+                results.append(pool.apply_async(
+                    func=self.__search__, args=newegg.values()))
             pool.close()
             pool.join()
             results = [r.get() for r in results]
@@ -156,15 +155,18 @@ class Newegg(Bot):
                 self.stop()
                 return False, round(time.time() - start_time)
 
-            self.logger.debug(f"{len(results)} requests in  {time.time() - start_req_time} seconds")
+            self.logger.debug(
+                f"{len(results)} requests in  {time.time() - start_req_time} seconds")
 
+        available_item = self.validate_cart()
 
-        self.validate_cart()
-        schedule.clear()
-        self.logger.info(f"There is item available!!!", True)
+        # schedule.clear()
+
+        now = time.time()
+        self.logger.info(
+            f"{available_item['ItemDetailInfo']['LineDescription']} is available!", True)
         cart_url = f"https://secure.newegg.com/shop/cart"
         # self.get(cart_url)
-        now = time.time()
 
         # self.driver.find_element_by_xpath("//button[@class='btn btn-primary btn-wide']").click()
         # time.sleep()
@@ -183,47 +185,42 @@ class Newegg(Bot):
                     pass
             time.sleep(0.3)
 
-        is_refreshed, is_logged_in = self.login(
-            with_direct=False) or (False, False)
-        if is_logged_in:
-            self.logger.info(f"Logged In!")
-            if(is_refreshed):
-                self.js_click(_class='btn btn-primary btn-wide', timeout=5)
-            self.type_cvv()
-            table = self.fetch_table()
-            self.logger.print(table)
+        # is_refreshed, is_logged_in = self.login(with_direct=False) or (False, False)
 
-            self.place_order() if not settings.DRY_RUN else None
-            self.logger.info(f"took {time.time() - now}  seconds")
-            order_num = self.get_order_num() if not settings.DRY_RUN and self.is_success(
-            ) else f"FAILED_ORDER#{self.get_timestamp()[7:]}"
+        self.type_cvv()
+        table = self.fetch_table()
+        self.logger.print(table)
 
-            self.screenshot(name=order_num)
-            # time.sleep(1)
-            global success
-            success = True
-        else:
-            self.logger.error("There was an error with login, quit...")
+        self.place_order() if not settings.DRY_RUN else None
+        self.logger.info(f"took {time.time() - now}  seconds")
+        order_num = self.get_order_num() if not settings.DRY_RUN and self.is_success(
+        ) else f"FAILED_ORDER#{self.get_timestamp()[7:]}"
+
+        self.screenshot(name=order_num)
+        # time.sleep(1)
+        global success
+        success = True
 
         if(not settings.DEV):
             self.driver.quit()
 
-        time.sleep(3)
-        self.scheduler.stop()
+        time.sleep(10)
+        # self.scheduler.stop()
         return (success, time.time()-now)
 
-    def login(self, with_direct=True):
+    def login(self):
         LOGIN_URL = 'https://secure.newegg.com/NewMyAccount/AccountLogin.aspx?'
+        self.get(LOGIN_URL, protect=False)
         attemps = 1
         email_step = False
         verification_step = False
-        is_refreshed = False
-        v_attempts = 0
-        while True and attemps < 500:
+        while attemps < 500:
             self.bot_protector()
-            if with_direct and email_step:
-                self.get(LOGIN_URL)
-                is_refreshed = True
+
+            temp_arr = self.driver.get_log('browser')
+            if(True in ['recaptcha' in log['message'] for log in temp_arr]):
+                print("recaptcha prob")
+                return False
 
             # if attemps == 50:
             #     self.got_to_captcha()
@@ -256,7 +253,6 @@ class Newegg(Bot):
             try:
                 form_verify_array = self.driver.find_element_by_xpath(
                     "//div[@class='form-v-code']").find_elements_by_xpath('//input')
-                v_attempts += 1
                 # wait_short = WebDriverWait(self.driver, 2.5, 0.1)
                 # wait_short.until(ec.visibility_of_element_located((By.CLASS_NAME, "form-v-code")))
                 self.logger.info(f"Fetching Verification Code...")
@@ -267,12 +263,10 @@ class Newegg(Bot):
                     form_verify_array[i].send_keys(verify_code[i])
                 login = self.driver.find_element_by_xpath(
                     "//button[@id='signInSubmit']").click()
-                return (is_refreshed, True)
+                self.logger.info(f"Logged In!")
+                return True
             except:
                 pass
-            if(v_attempts >= 2):
-                v_attempts = 0
-                self.driver.refresh()
 
             # # Password
             # self.logger.info(f"Typing Password...")
@@ -289,7 +283,8 @@ class Newegg(Bot):
                     # password_field.send_keys(Keys.ENTER)
                     self.driver.find_element_by_xpath(
                         "//button[@id='signInSubmit']").click()
-                    return (is_refreshed, True)
+                    self.logger.info(f"Logged In!")
+                    return True
                 except (NoSuchElementException, TimeoutException):
                     # self.logger.error("Couldnt login to account with password.")
                     pass
@@ -364,16 +359,19 @@ class Newegg(Bot):
         self.driver.get('https://secure.newegg.com/shop/cart')
         cart_items = self.get_cart_items(self.driver.page_source)
 
+        self.logger.info(
+            f"there {'is' if len(cart_items) == 1 else 'are'} {len(cart_items)} {'item' if len(cart_items) == 1 else 'items'} in the cart")
 
-        self.logger.debug(f"there {'is' if len(cart_items) == 1 else 'are'} {len(cart_items)} {'item' if len(cart_items) == 1 else 'items'} in the cart")
-        
-        min_item = min(cart_items, key=lambda x: x['ItemMathInfo']['FinalUnitPrice'])
+        min_item = min(
+            cart_items, key=lambda x: x['ItemMathInfo']['FinalUnitPrice'])
         for item in cart_items:
             if item == min_item:
                 self.set_qty(item, 1)
             else:
-                self.logger.debug(f"removing {item['ItemDetailInfo']['LineDescription']}...")
+                self.logger.info(
+                    f"removing {item['ItemDetailInfo']['LineDescription']}...")
                 self.set_qty(item, -1)
+        return min_item
 
     def set_qty(self, item, qty):
         """
@@ -521,37 +519,37 @@ class Newegg(Bot):
                 self.driver.refresh()
                 time.sleep(3)
 
-    def __search__(self):
-        self.load_cfg()
-
+    def __search__(self, query, category_id, price_min, price_max):
         try:
             show_in_stock_only = False
-            url = f"https://www.newegg.com/p/pl?d={self.search_query.replace(' ', '+')}&N={self.category}{'%204131 'if show_in_stock_only else ''}&PageSize=96&Order=1"
+            url = f"https://www.newegg.com/p/pl?d={query.replace(' ', '+')}&N={category_id}{'%204131 'if show_in_stock_only else ''}&PageSize=96&Order=1"
             response = self.get(url, xhr=True)
             html = response.text
             soup = bs4.BeautifulSoup(html, 'html.parser')
             self.logger.debug(soup.title.text)
             if(soup.title.text == 'Are you a human?' or soup.title.text == 'Forbidden: 403 Error'):
                 return "Human"
-            self.logger.debug(f"Searching for {self.search_query.upper()}")
+            self.logger.debug(f"Searching for {query.upper()}")
 
             scripts = soup.find_all('script')
             js_items = json.loads(soup.html.find('script', text=re.compile(
                 'window.__initialState__ = ')).string.replace("window.__initialState__ = ", ""))['Products']
 
-            items_obj = [self.Item(item) for item in js_items if self.Item.is_item(item)]
-                
+            items_obj = [self.Item(item)
+                         for item in js_items if self.Item.is_item(item)]
+
             # items = soup.find_all('div', 'item-cell')
             # items_obj = [self.Item(item_cell)
             #              for item_cell in items if self.Item.is_item(item_cell)]
 
             in_stock = [item for item in items_obj if item.in_stock]
-            self.logger.debug(f"in stock items: \n{in_stock}")
+            self.logger.debug(f"total items found: {len(items_obj)}")
+            self.logger.debug(f"in stock items: {len(in_stock)}")
             # print(items_obj)
             # temp_items = [extract_item(item) for item in items]
             # items_ids = [item['id'] for item in temp_items if item is not None and item['price'] in range(self.price_min, self.price_max)]
             relevant_items = [item for item in items_obj if round(item.price) in range(
-                self.price_min, self.price_max) and item.id not in self.items and item.in_stock]
+                price_min, price_max) and item.id not in self.items and item.in_stock]
             if len(relevant_items):
                 self.logger.info(f"Found {len(relevant_items)} items")
                 self.logger.info(f"{relevant_items}")
@@ -564,7 +562,7 @@ class Newegg(Bot):
         cur_url = self.driver.current_url
         url = 'https://www.newegg.com/areyouahuman3?itn=true&referer=https%3A%2F%2Fwww.newegg.com%2FComponents%2FStore&why=8'
         self.get(url)
-        
+
         # self.VPN()
         # self.get(cur_url)
 
@@ -649,43 +647,32 @@ class Newegg(Bot):
 
     def get_timestamp(self):
         return str(datetime.datetime.timestamp(datetime.datetime.now())).replace('.', '')
-    
-    def __create_schedule__(self):
-        pass
-        # schedule.every(0.5).seconds.do(self.__search__).tag('search')
-        # schedule.every(2).minutes.do(self.VPN)
-
-        # schedule.every(1).hours.do(self.VPN).tag('change_ip')
-        # schedule.every(1).hours.do(self.got_to_captcha).tag('captcha')
-        # schedule.every(3).seconds.do(self.bot_protector).tag('protector')
-        # schedule.every(1).minutes.do(self.__create_driver__).tag('driver')
-
 
     def VPN(self):
-        schedule.clear()
         cur_ip, isp = self.get_ip()
         # cmd = Bot.CENNECT if connect else Bot.DISCONNECT if disconnect else Bot.CHANGE_IP
         os.system(f'"HMA! Pro VPN.exe" -disconnect')
         orginal_ip = None
-        while(not orginal_ip or isp != 'BEZEQINT'):
+
+        while(not orginal_ip or (isp != 'BEZEQINT' and isp != "Partner Communications")):
             try:
-                orginal_ip,isp = self.get_ip()
-                print("1",orginal_ip)
+                orginal_ip, isp = self.get_ip()
+                # print("1",orginal_ip)
             except:
                 pass
             time.sleep(1)
         new_ip = orginal_ip
         os.system(f'"HMA! Pro VPN.exe" -connect')
+        self.logger.info("Waiting for VPN connection...")
         while(new_ip == orginal_ip):
             try:
-                new_ip,isp = self.get_ip()
-                print('2',new_ip)
+                new_ip, isp = self.get_ip()
+                # print('2',new_ip)
             except:
                 pass
             time.sleep(1)
         self.__init_mail__()
         time.sleep(10)
-        self.__create_schedule__()
-        
+
     def __str__(self):
         return f"NEWEGG[{self.id}]"

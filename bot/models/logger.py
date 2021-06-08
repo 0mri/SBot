@@ -10,7 +10,7 @@ from bot import settings
 class Logger:
     Logger = None
     SHUFFLE_COLORS = False
-    COLORS = PURPLE, RED, BLUE, YELLOW, GREEN, MAGENTA  = ['purple','red','bright_blue', 'bright_yellow', 'bright_green', 'bright_magenta']
+    COLORS = PURPLE, RED, BLUE, YELLOW, GREEN, MAGENTA  = ['purple','red','bright_blue', 'yellow', 'green', 'bright_magenta']
     def __init__(self, logging_service="",instance=None, enable_notifications=True, color='purple'):
         
         self.name = logging_service
@@ -39,16 +39,16 @@ class Logger:
     def log(self, message, level="info", notification=True, attach=None):
         if level == "info":
             self.Logger.info(message)
-            self.console.log(f"[bright_cyan][INFO][{self.color}]\t[{self.name.upper()}] [/{self.color}]{message}")
+            self.console.log(f"[bright_cyan][INFO][{self.color}]\t[{self.name.upper()}][{self.instance}] [/{self.color}]{message}")
         elif level == "warning":
             self.Logger.warning(message)
-            self.console.log(f"[bright_yellow][WARNING][{self.color}]\t[{self.name.upper()}] [/{self.color}]{message}",style="yellow")
+            self.console.log(f"[bright_yellow][WARNING][{self.color}]\t[{self.name.upper()}][{self.instance}] [/{self.color}]{message}",style="yellow")
         elif level == "error":
             self.Logger.error(message)
-            self.console.log(f"[bright_red][ERROR][{self.color}]\t[{self.name.upper()}] [/{self.color}]{message}",style="red")
+            self.console.log(f"[bright_red][ERROR][{self.color}]\t[{self.name.upper()}][{self.instance}] [/{self.color}]{message}",style="red")
         elif level == "debug" and settings.DEV:
             self.Logger.debug(message)
-            self.console.log(f"[bright_green][DEBUG][{self.color}]\t[{self.name.upper()}] [/{self.color}]{message}",style="green")
+            self.console.log(f"[bright_green][DEBUG][{self.color}]\t[{self.name.upper()}][{self.instance}] [/{self.color}]{message}",style="green")
 
         if notification and self.NotificationHandler.enabled:
             self.NotificationHandler.send_notification(message=message,attachments=attach)
