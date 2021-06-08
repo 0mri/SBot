@@ -46,9 +46,10 @@ class Logger:
         elif level == "error":
             self.Logger.error(message)
             self.console.log(f"[bright_red][ERROR][{self.color}]\t[{self.name.upper()}][{self.instance}] [/{self.color}]{message}",style="red")
-        elif level == "debug" and settings.DEV:
+        elif level == "debug":
+            if  settings.DEV:
+                self.console.log(f"[bright_green][DEBUG][{self.color}]\t[{self.name.upper()}][{self.instance}] [/{self.color}]{message}",style="green")
             self.Logger.debug(message)
-            self.console.log(f"[bright_green][DEBUG][{self.color}]\t[{self.name.upper()}][{self.instance}] [/{self.color}]{message}",style="green")
 
         if notification and self.NotificationHandler.enabled:
             self.NotificationHandler.send_notification(message=message,attachments=attach)
