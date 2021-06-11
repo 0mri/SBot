@@ -53,9 +53,14 @@ class Bot:
         # self.run_continuously()
         
     def __init_mail__(self):
+        os.system('sudo sysctl net.ipv6.conf.all.disable_ipv6=1')
+        self.logger.debug("trying to connect mail")
         self.gmail = self.config['gmail']
         self.imap = imaplib.IMAP4_SSL("imap.gmail.com")
         self.imap.login(*self.gmail.values())
+        self.logger.debug("connected to mail!")
+        os.system('sudo sysctl net.ipv6.conf.all.disable_ipv6=0')
+        
 
     def run(self):
         raise NotImplementedError()
@@ -91,7 +96,7 @@ class Bot:
             caps["pageLoadStrategy"] = "eager"  # interactive
 
             prefs = {'profile.default_content_setting_values': {'javascript': 0, 'stylesheet': 2,
-                                                                'images': 2,
+                                                                'images': 0,
                                                                 'plugins': 2, 'popups': 2, 'geolocation': 2,
                                                                 'notifications': 2, 'auto_select_certificate': 2, 'fullscreen': 2,
                                                                 'mouselock': 2, 'mixed_script': 2, 'media_stream': 2,
@@ -105,6 +110,7 @@ class Bot:
             options.add_argument("start-maximized")
             options.add_argument("disable-infobars")
             options.add_argument("disable-gpu")
+            options.add_argument("no-sandbox")
             options.add_argument("disable-extensions")
 
             self.logger.debug(
@@ -124,20 +130,25 @@ class Bot:
             self.driver = driver
 
     def get(self, url, protect=True, xhr=False):
+        self.driver.set_page_load_timeout(5)
         if xhr:
-            self.logger.debug(f"xhr request: {url}")
-            try:
-                response = self.driver.request('GET', url,page_load_timeout=2)
-            except:
-                pass
+            while True:
+                try:
+                    self.logger.debug(f"XHR: {url}")
+                    response = self.driver.request('GET', url,page_load_timeout=2,find_window_handle_timeout=2)
+                    return response
+                except:
+                    pass
             # Bot.PROTECTOR(source=bs4.BeautifulSoup(response.text, 'html.parser')) if Bot.PROTECTOR is not None and protect else None
-            return response
         else:
-            self.logger.debug(f"getting {url}")
-            try:
-                self.driver.get(url)
-            except :
-                pass
+            self.logger.debug(f"GET: {url}")
+            while True:
+                try:
+                    self.driver.get(url=url)
+                    break
+                except TimeoutException:
+                    self.logger.debug("timeout err")
+                    
             Bot.PROTECTOR() if Bot.PROTECTOR is not None and protect else None
         # self.driver.execute_script('localStorage.setItem("aatc_mask_show2",1)')
 

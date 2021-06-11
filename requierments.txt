@@ -1,7 +1,6 @@
 altgraph==0.17
 appdirs==1.4.4
 apprise==0.9.3
-asn1crypto==0.24.0
 autopep8==1.5.7
 beautifulsoup4==4.9.3
 bs4==0.0.1
@@ -11,7 +10,6 @@ chardet==4.0.0
 click==8.0.1
 colorama==0.4.4
 commonmark==0.9.1
-cryptography==2.1.4
 dataclasses==0.8
 distlib==0.3.1
 fake-useragent==0.1.11
@@ -22,14 +20,12 @@ importlib-metadata==4.0.1
 importlib-resources==4.1.1
 keyring==10.6.0
 keyrings.alt==3.0
-leveldb==0.201
 Markdown==3.3.4
 msedge-selenium-tools==3.141.3
 numpy==1.19.5
 oauthlib==3.1.0
 pushpad==0.9.0
 pycodestyle==2.7.0
-pycrypto==2.6.1
 Pygments==2.9.0
 pygobject==3.26.1
 pyinstaller-hooks-contrib==2021.1

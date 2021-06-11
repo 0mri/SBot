@@ -10,3 +10,6 @@ OS = None
 APPRISE_CONFIG_PATH = "bot/config/config.yml"
 PROCESSES_NUM = None
 CAPTCHA = None
+
+VPN_CONNECT_CMD = 'sudo ~/vpn/hma-vpn.sh -d -c ~/vpn/credentials -p udp "netherlands"'
+VPN_DISCONNECT_CMD = "sudo ~/vpn/hma-vpn.sh -x"

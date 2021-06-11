@@ -12,8 +12,8 @@ def pre_run():
     # os.system("taskkill /im chrome.exe /f")
     parser = argparse.ArgumentParser(prog="bot",description="SELENIUM BOT")
     
-    
-    os.system("kill -9 `pidof chrome chromedriver`") if platform.system() == settings.LINUX else os.system("taskkill /im chrome.exe /f  | taskkill /im chromedriver.exe /f")
+    os.system('sudo sysctl net.ipv6.conf.all.disable_ipv6=0')
+    # os.system("kill -9 'pidof chrome chromedriver'") if platform.system() == settings.LINUX else os.system("taskkill /im chrome.exe /f  | taskkill /im chromedriver.exe /f")
     
 
     parser.add_argument("-d","--dev",help="(optional) set developer mode",default=False,action='store_true')

@@ -8,7 +8,6 @@ from random import shuffle
 from . import Config
 from bot import settings
 class Logger:
-    Logger = None
     SHUFFLE_COLORS = False
     COLORS = PURPLE, RED, BLUE, YELLOW, GREEN, MAGENTA  = ['purple','red','bright_blue', 'yellow', 'green', 'bright_magenta']
     def __init__(self, logging_service="",instance=None, enable_notifications=True, color='purple'):
@@ -23,7 +22,7 @@ class Logger:
             self.color =  Logger.COLORS[0]
         # self.color =  'bright_magenta'
         # Logger setup
-        self.Logger = logging.getLogger(f"{self.name.lower()}")
+        self.Logger = logging.getLogger(f"{self.name.lower()}{instance}")
         self.Logger.setLevel(logging.DEBUG)
         fh = logging.FileHandler(f"./bot/logs/{self.name.lower()}.log")
         formatter = logging.Formatter(f"%(asctime)s - [{self.instance}] - %(levelname)s - %(message)s")
