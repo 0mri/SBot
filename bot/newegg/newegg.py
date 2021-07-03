@@ -20,17 +20,17 @@ import json
 from ruamel import yaml
 from multiprocessing.pool import ThreadPool
 from multiprocessing.process import current_process
-from multiprocessing import cpu_count, Value, Manager
+from multiprocessing import cpu_count
 from .helpers import extract_item
 from bot import settings
 from bot.newegg.decorators.decorators import synchronized
 import sys
 import re
 import socket
-is_found = Value('i', 0)
 success = False
-
+START_TIME = None
 FOUND_TIME = None
+
 
 class Newegg(Bot):
 
@@ -39,11 +39,12 @@ class Newegg(Bot):
             """return Item object from newegg dict_item"""
             self.init(*extract_item(dict_item).values())
 
-        def init(self, is_combo, _id, name, price, currency, link, image, in_stock):
+        def init(self, is_combo, _id, name, price, shipping, currency, link, image, in_stock):
             self.is_combo = is_combo
             self.id = _id
             self.name = name
             self.price = price
+            self.shipping = shipping
             self.currency = currency
             self.link = link
             self.image = image
@@ -52,14 +53,23 @@ class Newegg(Bot):
         # def in_range(self):
         #     return self.price in range(self.price_min, self.price_max)
 
-        def is_in_stock(self) -> bool:
+        def is_in_stock(self):
             return self.in_stock
 
+        def get_link_id(self):
+            if self.is_combo:
+                return f"Combo.{self.id}"
+            else:
+                return self.id
+
+        def total_price(self):
+            return self.price + self.shipping
+
         def __str__(self):
-            return f"{self.name} - {self.currency}{self.price}"
+            return f"{self.name} - {self.currency}{self.price} - {self.currency}{self.shipping}"
 
         def __repr__(self):
-            return f"{self.name} - {self.currency}{self.price}"
+            return f"{self.name} - {self.currency}{self.price} - {self.currency}{self.shipping}"
 
         @classmethod
         def is_item(cls, item: dict):
@@ -69,7 +79,7 @@ class Newegg(Bot):
     BOT_PROTECTION_INTERVAL = 1
     SEARCH_INTERVAL = 3
     FETCH_MAIL_INTERVAL = 0
-    
+
     def __init__(self, test=False, *args, **kwargs):
         self.is_test = test
         self.id = Newegg.INSTANCE
@@ -102,47 +112,107 @@ class Newegg(Bot):
         self.username = self.config['username']
         self.password = self.config['password']
         self.cvv = self.config['cvv']
-        
+
         self.home_url = self.config['urls']['home']
         self.cart_url = self.config['urls']['cart']
         self.login_url = self.config['urls']['login']
-        
+
     def stop(self):
         self.driver.quit()
 
     def start(self, timeout=sys.maxsize):
-        start_time = time.time()
-        
-        
+        global START_TIME
+        START_TIME = time.time()
+
         Bot.PROTECTOR = self.bot_protector
         self.driver = self.__create_driver__()
 
         if not self.VPN():
-            return False, round(time.time() - start_time)
-        self.get(self.home_url,protect=False)
+            self.driver.quit()
+            return False, round(time.time() - START_TIME)
+        self.get(self.home_url, protect=False)
         time.sleep(1)
-            
-        None if not settings.CAPTCHA else self.got_to_captcha()
-        
-        time.sleep(3)
-        
-        # self.__create_driver__()
-        # MAIN FLOW
 
-        # login
-        
-        
+        None if not settings.CAPTCHA else self.got_to_captcha()
+
+        time.sleep(3)
+
         is_logged_in = self.login()
         if not is_logged_in:
             self.stop()
-            return False, round(time.time() - start_time)
-        
-        
+            return False, round(time.time() - START_TIME)
+
         time.sleep(1)
         self.empty_cart()
         time.sleep(3)
+
+        while True:
+            is_success, run_time = self.thread_scan(timeout=timeout)
+            if(not is_success):
+                return is_success, run_time
+
+            elif is_success:
+                ans = self.validate_cart()
+                if ans:
+                    break
+                else:
+                    global FOUND_TIME
+                    FOUND_TIME = None
+
+        # schedule.clear()
+
+        now = time.time()
+
+        # self.get(cart_url)
+
+        # self.driver.find_element_by_xpath("//button[@class='btn btn-primary btn-wide']").click()
+        # time.sleep()
+        # self.close_popup()
+        # self.driver.find_element_by_xpath("//button[@class='btn btn-primary btn-wide']").click()
+        while('Shopping Cart' in self.driver.title):
+            self.logger.debug("clicking checkout btn")
+            try:
+                self.driver.execute_script(
+                    "return document.getElementsByClassName('btn')[15].click()")
+            except:
+                try:
+                    self.driver.execute_script(
+                        "return document.getElementsByClassName('btn btn-primary btn-wide')[0].click()")
+                except:
+                    pass
+            time.sleep(0.3)
+
+        # is_refreshed, is_logged_in = self.login(with_direct=False) or (False, False)
+
+        self.type_cvv()
+        table = self.fetch_table()
+        self.logger.print(table)
+
+        self.place_order() if not settings.DRY_RUN else None
+        if FOUND_TIME:
+            self.logger.info(
+                f"{int((time.time() - FOUND_TIME)*100)/100} seconds - FOUND")
+        self.logger.info(
+            f"{int((time.time() - now)*100)/100} seconds - CHECKOUT")
+        finish = time.time()
+        order_num = self.get_order_num() if not settings.DRY_RUN and self.is_success(
+        ) else f"FAILED_ORDER#{self.get_timestamp()[7:]}"
+
+        self.screenshot(name=order_num)
+        # time.sleep(1)
+        global success
+        success = True
+
+        if(not settings.DEV):
+            self.driver.quit()
+
+        time.sleep(10)
+        # self.scheduler.stop()
+        return (success, finish-now)
+
+    def thread_scan(self, timeout):
         self.logger.info(f"Start Scanning...")
-        global FOUND_TIME
+        global FOUND_TIME, START_TIME
         results = []
         while True not in results:
             self.load_cfg()
@@ -160,73 +230,25 @@ class Newegg(Bot):
                     func=self.add_to_cart, args=[self.items[i]]))
 
             # Search Query
-            
+
             if not FOUND_TIME:
                 for newegg in self.config['newegg'] or []:
                     results.append(pool.apply_async(
                         func=self.__search__, args=newegg.values()))
+            elif time.time()-FOUND_TIME > 60:
+                FOUND_TIME = None
+
             pool.close()
             pool.join()
             results = [r.get() for r in results]
-            if('Human' in results or time.time() >= start_time + timeout*60):
+            if('Human' in results or time.time() >= START_TIME + timeout*60):
                 self.stop()
-                return False, round(time.time() - start_time)
+                return False, round(time.time() - START_TIME)
 
             self.logger.debug(
                 f"{len(results)} requests in  {time.time() - start_req_time} seconds")
 
-        available_item = self.validate_cart()
-
-        # schedule.clear()
-
-        now = time.time()
-        self.logger.info(
-            f"{available_item['ItemDetailInfo']['LineDescription']} is available!", True)
-        
-        # self.get(cart_url)
-
-        # self.driver.find_element_by_xpath("//button[@class='btn btn-primary btn-wide']").click()
-        # time.sleep()
-        # self.close_popup()
-        # self.driver.find_element_by_xpath("//button[@class='btn btn-primary btn-wide']").click()
-        while('Shopping Cart' in self.driver.title):
-            self.logger.debug("clicking checkout btn")
-            try:
-                self.driver.execute_script(
-                    "return document.getElementsByClassName('btn btn-secondary')[0].click()")
-            except:
-                try:
-                    self.driver.execute_script(
-                        "return document.getElementsByClassName('btn btn-primary btn-wide')[0].click()")
-                except:
-                    pass
-            time.sleep(0.3)
-
-        # is_refreshed, is_logged_in = self.login(with_direct=False) or (False, False)
-
-        self.type_cvv()
-        table = self.fetch_table()
-        self.logger.print(table)
-
-        self.place_order() if not settings.DRY_RUN else None
-        if FOUND_TIME:
-            self.logger.info(f"{int((time.time() - FOUND_TIME)*100)/100} seconds - FOUND")
-        self.logger.info(f"{int((time.time() - now)*100)/100} seconds - CHECKOUT")
-        finish = time.time()
-        order_num = self.get_order_num() if not settings.DRY_RUN and self.is_success(
-        ) else f"FAILED_ORDER#{self.get_timestamp()[7:]}"
-
-        self.screenshot(name=order_num)
-        # time.sleep(1)
-        global success
-        success = True
-
-        if(not settings.DEV):
-            self.driver.quit()
-
-        time.sleep(10)
-        # self.scheduler.stop()
-        return (success, finish-now)
+        return True, round(time.time() - START_TIME)
 
     def login(self):
         self.get(self.login_url, protect=False)
@@ -274,7 +296,7 @@ class Newegg(Bot):
                     "//div[@class='form-v-code']").find_elements_by_xpath('//input')
                 # wait_short = WebDriverWait(self.driver, 2.5, 0.1)
                 # wait_short.until(ec.visibility_of_element_located((By.CLASS_NAME, "form-v-code")))
-                self.logger.info(f"Fetching Verification Code...")
+                self.logger.info(f"Fetching Verification Code...", False)
                 verify_code = self.__get_mail_verification_code__(timeout=10)
                 for i in range(len(verify_code)):
                     if i == len(verify_code):
@@ -282,7 +304,7 @@ class Newegg(Bot):
                     form_verify_array[i].send_keys(verify_code[i])
                 login = self.driver.find_element_by_xpath(
                     "//button[@id='signInSubmit']").click()
-                self.logger.info(f"Logged In!")
+                self.logger.info(f"Logged In!", False)
                 return True
             except:
                 pass
@@ -302,7 +324,7 @@ class Newegg(Bot):
                     # password_field.send_keys(Keys.ENTER)
                     self.driver.find_element_by_xpath(
                         "//button[@id='signInSubmit']").click()
-                    self.logger.info(f"Logged In!")
+                    self.logger.info(f"Logged In!", False)
                     return True
                 except (NoSuchElementException, TimeoutException):
                     # self.logger.error("Couldnt login to account with password.")
@@ -339,10 +361,6 @@ class Newegg(Bot):
         return False
 
     def add_to_cart(self, item):
-        global is_found
-        if bool(is_found.value):
-            return True
-        # self.get(url)
         add_url = f"https://secure.newegg.com/Shopping/AddtoCart.aspx?Submit=ADD&ItemList={item}"
         try:
             response = self.get(add_url, xhr=True)
@@ -374,30 +392,53 @@ class Newegg(Bot):
         return js['CartInfo']['ActiveItemList'] or []
 
     def validate_cart(self):
-        self.driver.get('https://secure.newegg.com/shop/cart')
+        self.driver.get(self.cart_url)
         cart_items = self.get_cart_items(self.driver.page_source)
 
+        if not cart_items:
+            return False
         self.logger.info(
             f"there {'is' if len(cart_items) == 1 else 'are'} {len(cart_items)} {'item' if len(cart_items) == 1 else 'items'} in the cart")
 
-        min_item = min(
-            cart_items, key=lambda x: x['ItemMathInfo']['FinalUnitPrice'])
-        for item in cart_items:
-            if item == min_item:
-                self.set_qty(item, 1)
-            else:
-                self.logger.info(
-                    f"removing {item['ItemDetailInfo']['LineDescription']}...")
-                self.set_qty(item, -1)
-        return min_item
-    def empty_cart(self):
-        c_items = self.get_cart_items()
-        if len(c_items):
-            self.logger.debug(f"there is {len(c_items)} items in the cart, removing items...")
-            for item in c_items:
-                self.set_qty(item,-1)
+        irel_items = [{'ItemNumber': item['ItemNumber'], 'ItemKey':item['ItemKey'], 'qty': -1}
+                      for item in cart_items if 'GDDR' not in item['ItemDetailInfo']['LineDescription'] and 'Combo' not in item['NeweggItemNumber']]
 
-    def set_qty(self, item, qty):
+        rel_items = [item for item in cart_items if 'GDDR' in item['ItemDetailInfo']
+                     ['LineDescription'] and 'Combo' not in item['NeweggItemNumber']]
+
+        resp = []
+        min_rel_item = None
+        if(rel_items):
+            min_rel_item = min(
+                rel_items, key=lambda x: x['ItemMathInfo']['FinalUnitPrice'])
+            self.logger.info(
+                f"min_item: {min_rel_item['ItemDetailInfo']['LineDescription']} ", False)
+            for item in rel_items:
+                if item == min_rel_item:
+                    resp.append({
+                        'ItemNumber': item['ItemNumber'],
+                        'ItemKey': item['ItemKey'],
+                        'qty': 1
+                    })
+                else:
+                    self.logger.info(f"removing {item['ItemDetailInfo']['LineDescription']}...")
+                    resp.append({
+                        'ItemNumber': item['ItemNumber'],
+                        'ItemKey': item['ItemKey'],
+                        'qty': -1
+                    })
+        self.set_qty(resp+irel_items)
+        return min_rel_item
+
+    def empty_cart(self):
+        to_clear_items = [{'ItemNumber': item['ItemNumber'],
+                           'ItemKey': item['ItemKey'], 'qty': -1} for item in self.get_cart_items()]
+        if len(to_clear_items):
+            self.logger.debug(
+                f"there is {len(to_clear_items)} items in the cart, removing items...")
+            self.set_qty(to_clear_items)
+
+    def set_qty(self, items):
         """
         set quantity for an item in the cart,
         -1 for delete
@@ -416,7 +457,7 @@ class Newegg(Bot):
             },
             "referrer": "https://secure.newegg.com/shop/cart",
             "referrerPolicy": "unsafe-url",
-            "body":  json.dumps({'Actions': [{'ActionType': 'UpdateItemQty', 'JsonContent': json.dumps({'ActionType': 'UpdateItemQty', 'Items': [{'ItemKey': item['ItemKey'], 'ItemNumber': item['ItemNumber'], 'Quantity': qty}]})}]}),
+            "body":  json.dumps({'Actions': [{'ActionType': 'UpdateItemQty', 'JsonContent': json.dumps({'ActionType': 'UpdateItemQty', 'Items': [{'ItemKey': item['ItemKey'], 'ItemNumber': item['ItemNumber'], 'Quantity': item['qty']} for item in items]})}]}),
             "method": "POST",
             "mode": "cors",
             "credentials": "include"
@@ -515,7 +556,7 @@ class Newegg(Bot):
             return
         while(self.driver.title == 'Are you a human?'):
             wait = WebDriverWait(self.driver, 30, 0.1)
-            self.logger.info("Bot detection is activated")
+            self.logger.info("Bot detection is activated", False)
             try:
                 wait.until(ec.visibility_of_element_located(
                     (By.ID, "imageCode")))
@@ -525,18 +566,18 @@ class Newegg(Bot):
                 _captcha = self.driver.find_element_by_xpath(
                     "//img[@id='imageCode']").get_attribute('src')
                 image_type, image_content = _captcha.split(',', 1)
-                self.logger.info("Fetching Captcha...")
+                self.logger.info("Fetching Captcha...", False)
                 start_time = time.time()
                 solved_captcha = self.captcha(base64.b64decode(image_content))
                 self.driver.find_element_by_xpath(
                     "//input[@id='userInput']").send_keys(solved_captcha)
                 self.driver.find_element_by_xpath(
                     "//input[@id='verifyCode']").click()
-                time.sleep(0.5)
+                time.sleep(1)
                 try:
                     alert = self.driver.switch_to_alert()
                     self.logger.info(
-                        f"Wrong Captcha Trying Again - {solved_captcha}  - {round(time.time()-start_time)}s")
+                        f"Wrong Captcha Trying Again - {solved_captcha}  - {round(time.time()-start_time)}s", False)
                     alert.accept()
                 except:
                     self.logger.info(
@@ -566,10 +607,10 @@ class Newegg(Bot):
             except:
                 js_items = json.loads(soup.html.find('script', text=re.compile(
                     'window.__initialState__ = ')).string.replace("window.__initialState__ = ", ""))['ProductDeals']
-                
+
             items_obj = [self.Item(item)
                          for item in js_items if self.Item.is_item(item)]
-            
+
             # items = soup.find_all('div', 'item-cell')
             # items_obj = [self.Item(item_cell)
             #              for item_cell in items if self.Item.is_item(item_cell)]
@@ -580,14 +621,15 @@ class Newegg(Bot):
             # print(items_obj)
             # temp_items = [extract_item(item) for item in items]
             # items_ids = [item['id'] for item in temp_items if item is not None and item['price'] in range(self.price_min, self.price_max)]
-            relevant_items = [item for item in items_obj if round(item.price) in range(
-                price_min, price_max) and item.id not in self.items and item.in_stock]
+            relevant_items = [item for item in items_obj if round(item.total_price()) in range(
+                price_min, price_max) and item.get_link_id() not in self.items and item.in_stock]
             if len(relevant_items):
                 global FOUND_TIME
                 FOUND_TIME = time.time()
                 self.logger.info(f"Found {len(relevant_items)} items")
                 self.logger.info(f"{relevant_items}")
-                self.items = [item.id for item in relevant_items] + self.items
+                self.items = [item.get_link_id()
+                              for item in relevant_items] + self.items
                 self.save_items()
         except:
             pass
@@ -698,7 +740,7 @@ class Newegg(Bot):
                 pass
             time.sleep(1)
         new_ip = orginal_ip
-        
+
         os.system(settings.VPN_CONNECT_CMD)
         self.logger.debug("Waiting for VPN connection...")
         start_time = time.time()
@@ -713,7 +755,7 @@ class Newegg(Bot):
                 return False
             time.sleep(1)
         self.__init_mail__()
-        #remove last mail from new egg if exist
+        # remove last mail from new egg if exist
         if self.__get_mail_verification_code__(timeout=1):
             self.logger.debug(f"found mail from newegg romving...")
         time.sleep(5)

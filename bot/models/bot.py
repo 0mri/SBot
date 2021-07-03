@@ -249,3 +249,6 @@ class Bot:
         res = requests.get('http://ip-api.com/json/').json()
         return res['query'], res['isp']
 
+
+
+
