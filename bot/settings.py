@@ -8,8 +8,9 @@ DRY_RUN = None
 DRIVER_PATH = 'bot/driver/'
 OS = None
 APPRISE_CONFIG_PATH = "bot/config/config.yml"
-PROCESSES_NUM = None
+URGENTBOT_CONFIG_PATH = "bot/config/urgentbot.yml"
 CAPTCHA = None
 
-VPN_CONNECT_CMD = 'sudo ~/vpn/hma-vpn.sh -d -c ~/vpn/credentials -p udp "netherlands"'
+USERNAME = "OMRI"
+VPN_CONNECT_CMD = 'sudo ~/vpn/hma-vpn.sh -d -c ~/vpn/credentials -p udp "germany"'
 VPN_DISCONNECT_CMD = "sudo ~/vpn/hma-vpn.sh -x"

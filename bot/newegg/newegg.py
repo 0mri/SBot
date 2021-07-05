@@ -128,7 +128,6 @@ class Newegg(Bot):
         self.driver = self.__create_driver__()
 
         if not self.VPN():
-            self.driver.quit()
             return False, round(time.time() - START_TIME)
         self.get(self.home_url, protect=False)
         time.sleep(1)
@@ -139,7 +138,6 @@ class Newegg(Bot):
 
         is_logged_in = self.login()
         if not is_logged_in:
-            self.stop()
             return False, round(time.time() - START_TIME)
 
         time.sleep(1)
@@ -191,9 +189,9 @@ class Newegg(Bot):
         self.place_order() if not settings.DRY_RUN else None
         if FOUND_TIME:
             self.logger.info(
-                f"{int((time.time() - FOUND_TIME)*100)/100} seconds - FOUND")
+                f"{int((time.time() - FOUND_TIME)*100)/100} seconds - FOUND", urgent=True)
         self.logger.info(
-            f"{int((time.time() - now)*100)/100} seconds - CHECKOUT")
+            f"{int((time.time() - now)*100)/100} seconds - CHECKOUT", urgent=True)
         finish = time.time()
         order_num = self.get_order_num() if not settings.DRY_RUN and self.is_success(
         ) else f"FAILED_ORDER#{self.get_timestamp()[7:]}"
@@ -397,8 +395,7 @@ class Newegg(Bot):
 
         if not cart_items:
             return False
-        self.logger.info(
-            f"there {'is' if len(cart_items) == 1 else 'are'} {len(cart_items)} {'item' if len(cart_items) == 1 else 'items'} in the cart")
+        self.logger.info(f"there {'is' if len(cart_items) == 1 else 'are'} {len(cart_items)} {'item' if len(cart_items) == 1 else 'items'} in the cart")
 
         irel_items = [{'ItemNumber': item['ItemNumber'], 'ItemKey':item['ItemKey'], 'qty': -1}
                       for item in cart_items if 'GDDR' not in item['ItemDetailInfo']['LineDescription'] and 'Combo' not in item['NeweggItemNumber']]

@@ -1,20 +1,22 @@
 import queue
 import threading
 from os import path
-from bot.settings import APPRISE_CONFIG_PATH
+from bot.settings import APPRISE_CONFIG_PATH, URGENTBOT_CONFIG_PATH, USERNAME
 import apprise
-
-
 
 
 class NotificationHandler:
     def __init__(self, enabled=True, name=""):
         self.name = name
         if enabled and path.exists(APPRISE_CONFIG_PATH):
-            self.apobj = apprise.Apprise()
-            config = apprise.AppriseConfig()
-            config.add(APPRISE_CONFIG_PATH)
-            self.apobj.add(config)
+
+            self.apobj = [apprise.Apprise(), apprise.Apprise()]
+            config = [apprise.AppriseConfig(), apprise.AppriseConfig()]
+            config[0].add(APPRISE_CONFIG_PATH)
+            config[1].add(URGENTBOT_CONFIG_PATH)
+            self.apobj[0].add(config[0])
+            self.apobj[1].add(config[1])
+
             self.queue = queue.Queue()
             self.start_worker()
             self.enabled = True
@@ -26,13 +28,17 @@ class NotificationHandler:
 
     def process_queue(self):
         while True:
-            message, attachments = self.queue.get()
+            message, attachments, num = self.queue.get()
+            print(num)
             if attachments:
-                self.apobj.notify(title=self.name,body=message, attach=attachments)
+               
+                self.apobj[num].notify(
+                    title=self.name, body=message, attach=attachments)
             else:
-                self.apobj.notify(title=self.name,body=message)
+                self.apobj[num].notify(title=self.name, body=message)
             self.queue.task_done()
 
-    def send_notification(self, message, attachments=None):
+    def send_notification(self, message, attachments=None, urgent=False):
         if self.enabled:
-            self.queue.put((message, attachments or []))
+            self.queue.put((f"{USERNAME}: " + message, attachments or [], int(urgent)))
+

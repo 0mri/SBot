@@ -21,6 +21,8 @@ import sys
 import imaplib
 import requests
 import re
+
+
 class Bot:
     PROTECTOR = None
     INITIAL_IP = None
@@ -46,12 +48,10 @@ class Bot:
         if self._config.get('2captcha', None):
             api_key = self._config['2captcha']['api_key']
             self._solver = CaptchaSolver('2captcha', api_key=api_key)
-        
-        
 
         # Start Backgroud Tasks
         # self.run_continuously()
-        
+
     def __init_mail__(self):
         os.system('sudo sysctl net.ipv6.conf.all.disable_ipv6=1')
         self.logger.debug("trying to connect mail")
@@ -60,7 +60,6 @@ class Bot:
         self.imap.login(*self.gmail.values())
         self.logger.debug("connected to mail!")
         os.system('sudo sysctl net.ipv6.conf.all.disable_ipv6=0')
-        
 
     def run(self):
         raise NotImplementedError()
@@ -116,7 +115,7 @@ class Bot:
             self.logger.debug(
                 f"creating chromedriver for {self.__class__.__name__}", False)
             return Chrome(desired_capabilities=caps,
-                            executable_path=settings.DRIVER_PATH, options=options)
+                          executable_path=settings.DRIVER_PATH, options=options)
         elif(self.webdriver == settings.EDGE):
             options = EdgeOptions()
             if(self.headless or settings.HEADLESS):
@@ -135,7 +134,8 @@ class Bot:
             while True:
                 try:
                     self.logger.debug(f"XHR: {url}")
-                    response = self.driver.request('GET', url,page_load_timeout=2,find_window_handle_timeout=2)
+                    response = self.driver.request(
+                        'GET', url, page_load_timeout=2, find_window_handle_timeout=2)
                     return response
                 except:
                     pass
@@ -148,7 +148,7 @@ class Bot:
                     break
                 except TimeoutException:
                     self.logger.debug("timeout err")
-                    
+
             Bot.PROTECTOR() if Bot.PROTECTOR is not None and protect else None
         # self.driver.execute_script('localStorage.setItem("aatc_mask_show2",1)')
 
@@ -204,7 +204,7 @@ class Bot:
         # self.driver.maximize_window()
         path = f"bot/{self.__class__.__name__.lower()}/screenshot/{name}.png"
         ans = self.driver.save_screenshot(path)
-        self.logger.info("", attach=f"{path}")
+        self.logger.info("", attach=f"{path}", urgent=True)
         if ans:
             self.logger.debug(f"Screenshot saved in - {path}")
         else:
@@ -243,12 +243,7 @@ class Bot:
 
         self.scheduler = ScheduleThread()
         self.scheduler.start()
-    
-    
+
     def get_ip(self):
         res = requests.get('http://ip-api.com/json/').json()
         return res['query'], res['isp']
-
-
-
-
