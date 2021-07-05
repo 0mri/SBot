@@ -131,6 +131,7 @@ dmypy.json
 
 
 # config 
+*.sh
 driver/
 *.png
 *.img
