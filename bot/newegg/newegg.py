@@ -271,7 +271,6 @@ class Newegg(Bot):
 
     def login(self):
         self.get(self.login_url, protect=False)
-        time.sleep(1000000)
         attemps = 1
         email_step = False
         verification_step = False
