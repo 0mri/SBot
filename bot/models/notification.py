@@ -1,7 +1,7 @@
 import queue
 import threading
 from os import path
-from bot.settings import APPRISE_CONFIG_PATH, URGENTBOT_CONFIG_PATH, USERNAME
+from bot.settings import APPRISE_CONFIG_PATH, URGENTBOT_CONFIG_PATH
 import apprise
 
 
@@ -40,5 +40,5 @@ class NotificationHandler:
 
     def send_notification(self, message, attachments=None, urgent=False):
         if self.enabled:
-            self.queue.put((f"{USERNAME}: " + message, attachments or [], int(urgent)))
+            self.queue.put((message, attachments or [], int(urgent)))
 

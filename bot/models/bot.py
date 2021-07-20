@@ -21,6 +21,7 @@ import sys
 import imaplib
 import requests
 import re
+import random
 
 
 class Bot:
@@ -38,6 +39,7 @@ class Bot:
         self._config = self.___cfg___.config
         self.load_cfg()
         self.logger = logger
+        self.__check_first_time_init__()
         self.initialize()
         # self.schedule = schedule
 
@@ -48,6 +50,21 @@ class Bot:
         if self._config.get('2captcha', None):
             api_key = self._config['2captcha']['api_key']
             self._solver = CaptchaSolver('2captcha', api_key=api_key)
+        
+    def __check_first_time_init__(self):
+        name = self._config.get('name',None)
+        if name:
+            self.isp = self._config['isp']
+            return
+        name = input("Type your name:\n")
+        ip, isp = self.get_ip()
+        self._config['name'] = name
+        self._config['isp'] = isp
+        self.___cfg___.save(self._config)
+        self.isp = self._config['isp']
+        
+            
+
 
         # Start Backgroud Tasks
         # self.run_continuously()
@@ -81,8 +98,8 @@ class Bot:
         raise NotImplementedError()
 
     def __create_driver__(self):
-        # if  hasattr(self, 'driver'):
-        #     self.driver.close()
+        if  hasattr(self, 'driver'):
+            self.driver.quit()
         if(self.webdriver == settings.CHROME):
             options = webdriver.ChromeOptions()
             if(self.headless or settings.HEADLESS):
@@ -111,31 +128,30 @@ class Bot:
             options.add_argument("disable-gpu")
             options.add_argument("no-sandbox")
             options.add_argument("disable-extensions")
-
+            # PROXY = self.get_proxy()
+            # caps['proxy']={
+            #     "httpProxy":PROXY,
+            #     "ftpProxy":PROXY,
+            #     "sslProxy":PROXY,
+                
+            #     "proxyType":"MANUAL",
+                
+            # }
             self.logger.debug(
                 f"creating chromedriver for {self.__class__.__name__}", False)
             return Chrome(desired_capabilities=caps,
                           executable_path=settings.DRIVER_PATH, options=options)
-        elif(self.webdriver == settings.EDGE):
-            options = EdgeOptions()
-            if(self.headless or settings.HEADLESS):
-                options.headless = True
-            options.add_argument("window-size=1920,1080")
-            options.add_argument("--log-level=3")
-            driver = Edge(executable_path=settings.DRIVER_PATH,
-                          options=options)
-            self.logger.debug(
-                f"creating msedgedriver for {self.__class__.__name__}", False)
-            self.driver = driver
 
-    def get(self, url, protect=True, xhr=False):
-        self.driver.set_page_load_timeout(5)
+
+    def get(self, url, protect=True, xhr=False, proxy=False):
+        self.driver.set_page_load_timeout(20)
         if xhr:
             while True:
                 try:
                     self.logger.debug(f"XHR: {url}")
+                    # print("xhr from:",self.driver.request('GET', 'http://api.ipify.org',proxies=proxies, page_load_timeout=2, find_window_handle_timeout=2).text)
                     response = self.driver.request(
-                        'GET', url, page_load_timeout=2, find_window_handle_timeout=2)
+                        'GET', page_load_timeout=2, find_window_handle_timeout=2)
                     return response
                 except:
                     pass
@@ -247,3 +263,9 @@ class Bot:
     def get_ip(self):
         res = requests.get('http://ip-api.com/json/').json()
         return res['query'], res['isp']
+
+
+    def get_proxy(self):
+        with open('proxies.txt', 'r') as f:
+            proxies = f.read().split('\n')
+            return proxies[random.randint(0,len(proxies)-1)]

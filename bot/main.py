@@ -5,6 +5,9 @@ def main():
     while not success:
         negg = Newegg()
         success, time = negg.start(timeout=60)
-        negg.stop()
+        try:
+            negg.stop()
+        except:
+            pass
         # print(success, time)
     

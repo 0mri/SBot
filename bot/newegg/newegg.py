@@ -27,6 +27,19 @@ from bot.newegg.decorators.decorators import synchronized
 import sys
 import re
 import socket
+import random
+
+
+def get_location():
+    locations = settings.VPN_LOCATIONS
+    return locations[random.randint(0, len(locations)-1)]
+
+def VPN_CONNECT_CMD():
+    return f"sudo ~/vpn/hma-vpn.sh -d -c ~/vpn/credentials -p udp '{get_location()}'"
+# VPN_CONNECT_CMD = 
+VPN_DISCONNECT_CMD = "sudo ~/vpn/hma-vpn.sh -x"
+
+
 success = False
 START_TIME = None
 FOUND_TIME = None
@@ -125,13 +138,21 @@ class Newegg(Bot):
         START_TIME = time.time()
 
         Bot.PROTECTOR = self.bot_protector
-        self.driver = self.__create_driver__()
+        
 
         if not self.VPN():
             return False, round(time.time() - START_TIME)
+        # self.__init_mail__()
+        
+        self.driver = self.__create_driver__()
+        
+        time.sleep(1)
+        
         self.get(self.home_url, protect=False)
         time.sleep(1)
 
+        
+        
         None if not settings.CAPTCHA else self.got_to_captcha()
 
         time.sleep(3)
@@ -250,6 +271,7 @@ class Newegg(Bot):
 
     def login(self):
         self.get(self.login_url, protect=False)
+        time.sleep(1000000)
         attemps = 1
         email_step = False
         verification_step = False
@@ -276,6 +298,7 @@ class Newegg(Bot):
                     email_step = False
                     email_field.clear()
                     email_field.send_keys(self.username)
+                    time.sleep(1)
                 if(self.driver.find_element_by_xpath("//button[@id='signInSubmit']").is_enabled()):
                     email_field.send_keys(Keys.ENTER)
                     email_step = True
@@ -395,7 +418,8 @@ class Newegg(Bot):
 
         if not cart_items:
             return False
-        self.logger.info(f"there {'is' if len(cart_items) == 1 else 'are'} {len(cart_items)} {'item' if len(cart_items) == 1 else 'items'} in the cart")
+        self.logger.info(
+            f"there {'is' if len(cart_items) == 1 else 'are'} {len(cart_items)} {'item' if len(cart_items) == 1 else 'items'} in the cart")
 
         irel_items = [{'ItemNumber': item['ItemNumber'], 'ItemKey':item['ItemKey'], 'qty': -1}
                       for item in cart_items if 'GDDR' not in item['ItemDetailInfo']['LineDescription'] and 'Combo' not in item['NeweggItemNumber']]
@@ -418,7 +442,8 @@ class Newegg(Bot):
                         'qty': 1
                     })
                 else:
-                    self.logger.info(f"removing {item['ItemDetailInfo']['LineDescription']}...")
+                    self.logger.info(
+                        f"removing {item['ItemDetailInfo']['LineDescription']}...")
                     resp.append({
                         'ItemNumber': item['ItemNumber'],
                         'ItemKey': item['ItemKey'],
@@ -547,8 +572,10 @@ class Newegg(Bot):
     def bot_protector(self, source: bs4.BeautifulSoup = None):
         title = source.title.text if source else self.driver.title
         if title == 'Forbidden: 403 Error':
+            self.logger.debug("Forbidden")
             # self.VPN()
-            self.driver.get('www.newegg.com')
+            return
+            # self.driver.get('https://www.newegg.com')
         if title != 'Are you a human?':
             return
         while(self.driver.title == 'Are you a human?'):
@@ -584,11 +611,14 @@ class Newegg(Bot):
             except:
                 self.driver.refresh()
                 time.sleep(3)
+        return True
 
     def __search__(self, query, category_id, price_min, price_max, custom_link=None):
+        # ip = self.get('http://api.ipify.org', xhr=True).text
+        # self.logger.debug(f"IP: {ip}")
         try:
             show_in_stock_only = False
-            url = f"https://www.newegg.com/p/pl?d={query.replace(' ', '+')}&N={category_id}{'%204131 'if show_in_stock_only else ''}&PageSize=96&Order=1" if not custom_link else custom_link
+            url = f"https://www.newegg.com/p/pl?d={query.replace(' ', '+')}&N={category_id}{'%204131 'if show_in_stock_only else ''}&PageSize=96&Order=6" if not custom_link else custom_link
             response = self.get(url, xhr=True)
             html = response.text
             soup = bs4.BeautifulSoup(html, 'html.parser')
@@ -634,7 +664,7 @@ class Newegg(Bot):
     def got_to_captcha(self):
         cur_url = self.driver.current_url
         url = 'https://www.newegg.com/areyouahuman3?itn=true&referer=https%3A%2F%2Fwww.newegg.com%2FComponents%2FStore&why=8'
-        self.get(url)
+        self.get(url, proxy=True)
 
         # self.VPN()
         # self.get(cur_url)
@@ -725,11 +755,11 @@ class Newegg(Bot):
         cur_ip, isp = self.get_ip()
         # cmd = Bot.CENNECT if connect else Bot.DISCONNECT if disconnect else Bot.CHANGE_IP
         os.system('sudo sysctl net.ipv6.conf.all.disable_ipv6=0')
-        os.system(settings.VPN_DISCONNECT_CMD)
+        os.system(VPN_DISCONNECT_CMD)
         time.sleep(1)
         orginal_ip = None
 
-        while(not orginal_ip or (isp != 'BEZEQINT' and isp != "Partner Communications")):
+        while(not orginal_ip or (isp != self.isp)):
             try:
                 orginal_ip, isp = self.get_ip()
                 # print("1",orginal_ip)
@@ -738,7 +768,7 @@ class Newegg(Bot):
             time.sleep(1)
         new_ip = orginal_ip
 
-        os.system(settings.VPN_CONNECT_CMD)
+        os.system(VPN_CONNECT_CMD())
         self.logger.debug("Waiting for VPN connection...")
         start_time = time.time()
         while(new_ip == orginal_ip):
